@@ -43,7 +43,6 @@ attributes, shipping options, all images and the seller's rating.
 
 Download an ad's photos server-side and return them as real image content
 (base64), so a vision-capable client sees the pictures instead of just URLs.
-Handy when you want to actually look at a listing.
 
 **`get_seller_info(seller_id)`**
 
@@ -65,9 +64,7 @@ own search-options schema.
 
 Browse Kleinanzeigen's category tree to find the category ids
 `search_kleinanzeigen` takes. The full tree ships with the server in
-`data/categories.json`. Note the tree stops fairly high up: a finer cut like
-"Grafikkarten" is an attribute value from `get_category_filters`, not a
-category.
+`data/categories.json`.
 
 ## Setup
 
@@ -92,30 +89,71 @@ Starting kleinanzeigen-mcp server on http://127.0.0.1:8000/mcp
 Point your MCP client at that URL. Host, port and path live at the top of
 `main.py`.
 
-## Use it from Claude Desktop
+## Add it to Claude (and other MCP clients)
 
-Claude Desktop launches MCP servers over stdio, so bridge to this HTTP server
-with [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) (needs
-[Node.js](https://nodejs.org)):
+The server speaks streamable HTTP, so most clients only need the URL it printed
+on startup.
 
-1. Start the server (`python main.py`) and leave it running.
-2. In Claude Desktop open **Settings > Developer > Edit Config**; that reveals
-   `claude_desktop_config.json`. Open it and add the `kleinanzeigen` entry:
+### Claude Code
 
-   ```json
-   {
-     "mcpServers": {
-       "kleinanzeigen": {
-         "command": "cmd",
-         "args": ["/c", "npx", "-y", "mcp-remote", "http://127.0.0.1:8000/mcp"]
-       }
-     }
-   }
-   ```
+One command, no config file:
 
-   On macOS/Linux drop the Windows wrapper: use `"command": "npx"` with
-   `"args": ["-y", "mcp-remote", "http://127.0.0.1:8000/mcp"]`.
-3. Save the file and **restart Claude Desktop**.
+```bash
+claude mcp add --transport http kleinanzeigen http://127.0.0.1:8000/mcp
+```
+
+Add `--scope user` to have it in every project instead of only the current one.
+`claude mcp list` shows whether the connection came up, `claude mcp remove
+kleinanzeigen` takes it out again.
+
+### Cursor, Codex, VS Code and other JSON-config clients
+
+Same URL, in the client's MCP config:
+
+```json
+{
+  "mcpServers": {
+    "kleinanzeigen": {
+      "type": "http",
+      "url": "http://127.0.0.1:8000/mcp"
+    }
+  }
+}
+```
+
+### Claude Desktop
+
+Custom connectors (**Settings > Connectors**) are dialled from Anthropic's
+cloud, so they cannot reach a server bound to your own machine. Two ways
+around it:
+
+**Bridge over stdio** with [`mcp-remote`](https://www.npmjs.com/package/mcp-remote)
+(needs [Node.js](https://nodejs.org)). Open **Settings > Developer > Edit
+Config**, add the `kleinanzeigen` entry to `claude_desktop_config.json` and
+restart Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "kleinanzeigen": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "mcp-remote", "http://127.0.0.1:8000/mcp"]
+    }
+  }
+}
+```
+
+On macOS/Linux drop the Windows wrapper: `"command": "npx"` with
+`"args": ["-y", "mcp-remote", "http://127.0.0.1:8000/mcp"]`.
+
+**Or expose the server** (cloudflared, ngrok, or run it on a box with a public
+hostname) and add that HTTPS URL under **Settings > Connectors > Add custom
+connector**. That route also makes the tools available in claude.ai and the
+mobile apps, not just the desktop client but the API it talks to is then
+reachable by whoever finds the URL, so put auth in front of it.
+
+To stop confirming every call, open **Settings > Connectors > kleinanzeigen**
+and set the tools' dropdown on the right to **Always allow**.
 
 ## Notes
 - Search quirks worth knowing: `total` is capped at 10000 by Kleinanzeigen (so
@@ -128,8 +166,7 @@ with [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) (needs
   live `api/categories.json` (which ships the tree wrapped in JAXB envelopes
   and a single "Alle Kategorien" pseudo-root). Re-run it if Kleinanzeigen
   changes their categories.
-- API details, including the auth scheme and the Akamai finding, are
-  documented in [`search_api.md`](search_api.md).
+- API details are documented in [`search_api.md`](search_api.md).
 - This uses Kleinanzeigen's internal mobile API, not an official one. Be nice to it.
 
 ## Disclaimer
