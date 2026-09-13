@@ -31,5 +31,5 @@ jobs:
           git add coverage.json
           git diff --staged --quiet && exit 0
           git commit -m "chore: update coverage counts"
-          git pull --rebase origin main
+          git pull --rebase origin master
           git push
