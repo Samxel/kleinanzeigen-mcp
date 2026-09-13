@@ -1,4 +1,5 @@
 from mcp.server import MCPServer
+from mcp.server.mcpserver import Image
 import httpx
 import asyncio
 import html
@@ -113,6 +114,15 @@ def _ns(container: dict, local_name: str) -> dict:
         if key.endswith(f"}}{local_name}") or key == local_name:
             return _v(val, {})
     return {}
+
+
+_CONTENT_TYPE_FORMAT = {
+    "image/webp": "webp",
+    "image/jpeg": "jpeg",
+    "image/jpg": "jpeg",
+    "image/png": "png",
+    "image/gif": "gif",
+}
 
 
 def _image_urls(pictures: dict) -> list[str]:
@@ -339,14 +349,64 @@ async def get_ad_detail(ad_id: int) -> dict:
     options and image urls. Run it on an ``id`` from a search hit whenever the
     trimmed search summary isn't enough to answer.
 
-    For the seller's profile and reputation use ``get_seller_info`` with the
-    result's ``seller_id``.
+    To actually look at the photos use ``get_ad_images``; for the seller's
+    profile and reputation ``get_seller_info`` with the result's ``seller_id``.
 
     Args:
         ad_id: The Kleinanzeigen ad id.
     """
     data = await _get(f"ads/{ad_id}.json")
     return _summarize_ad_detail(_ns(data, "ad"))
+
+
+@mcp.tool(structured_output=False)
+async def get_ad_images(ad_id: int, max_images: int = 4) -> list:
+    """Fetch an ad's photos and return them as images you can actually look at.
+
+    Downloads up to ``max_images`` photos from Kleinanzeigen's CDN server-side
+    and returns them as image content blocks (base64), so a vision-capable
+    client sees the real pictures instead of just URLs. Call it with an id from
+    a search hit.
+
+    Reach for this whenever the pictures carry information you can't take on
+    trust from the text: the description is the seller's claim, the photos are
+    the evidence. Typical cases are judging the real condition (wear,
+    scratches, damage, completeness), reading details that only appear in an
+    image (a screenshot of specs, a label, a model or serial number, a display),
+    or confirming the item matches the description. As a rule of thumb, if your
+    answer depends on what the thing actually looks like, look at it.
+
+    Args:
+        ad_id: The Kleinanzeigen ad id.
+        max_images: How many photos to fetch, 1-10. Default 4.
+    """
+    max_images = max(1, min(int(max_images), 10))
+    try:
+        data = await _get(f"ads/{ad_id}.json")
+    except httpx.HTTPStatusError as exc:
+        return [f"could not fetch ad {ad_id} (HTTP {exc.response.status_code})"]
+    except httpx.HTTPError as exc:
+        return [f"could not reach Kleinanzeigen for ad {ad_id} ({type(exc).__name__})"]
+
+    ad = _ns(data, "ad")
+    urls = _image_urls(ad.get("pictures"))[:max_images]
+    if not urls:
+        return [f"No images found for ad {ad_id}."]
+
+    async def fetch(url: str):
+        try:
+            response = await client.get(url, headers={"user-agent": KA_CLIENT})
+            response.raise_for_status()
+            ctype = response.headers.get("content-type", "").split(";")[0].strip().lower()
+            return Image(data=response.content, format=_CONTENT_TYPE_FORMAT.get(ctype, "jpeg"))
+        except Exception as exc:  # a single broken image shouldn't fail the tool
+            logger.warning("image download failed (%s): %s", url, exc)
+            return None
+
+    fetched = await asyncio.gather(*(fetch(u) for u in urls))
+    pictures = [img for img in fetched if img is not None]
+    title = html.unescape(_v(ad.get("title")) or "") or f"ad {ad_id}"
+    return [f'{len(pictures)} image(s) for "{title}" (ad {ad_id}):', *pictures]
 
 
 @mcp.tool()
