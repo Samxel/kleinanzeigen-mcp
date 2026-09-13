@@ -40,6 +40,11 @@ MCP_PATH = "/mcp"
 MAX_RETRIES = 2
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
+MAX_ROWS = 30
+# How deep a client-side filter (title_only/require/exclude) may page before
+# giving up, so a term that matches nothing can't walk the whole catalogue.
+FILTER_MAX_SCAN = 250
+
 mcp = MCPServer("kleinanzeigen-mcp")
 client = httpx.AsyncClient(http2=True)
 
@@ -51,6 +56,38 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(mes
 Sort = Literal["RECOMMENDED", "DATE_DESCENDING", "PRICE_ASCENDING", "PRICE_DESCENDING", "DISTANCE_ASCENDING"]
 AdType = Literal["OFFERED", "WANTED"]
 PosterType = Literal["PRIVATE", "COMMERCIAL"]
+
+
+def _rows(rows: int) -> int:
+    """Validate a page size rather than quietly clamping 0 up to 1."""
+    rows = int(rows)
+    if rows < 1:
+        raise ValueError(f"rows must be at least 1 (got {rows}).")
+    return min(rows, MAX_ROWS)
+
+
+def _check_range(name: str, low, high) -> None:
+    """Reject an inverted range instead of letting Kleinanzeigen drop the filter
+    and quietly answer with everything."""
+    if low is not None and high is not None and low > high:
+        raise ValueError(
+            f"min_{name} ({low}) is above max_{name} ({high}) -- an inverted range is "
+            f"ignored by Kleinanzeigen and would silently return unfiltered results. Swap them."
+        )
+
+
+def _pagination(total, page: int, seen: int, returned: int) -> dict:
+    """Where the caller stands in the result set, so paging can be stopped on a
+    signal instead of on a repeated page. ``seen`` counts the ads consumed from
+    the catalogue so far (which post-filtering can push past ``returned``)."""
+    total = int(total) if str(total or "").isdigit() else None
+    more = not (total is not None and seen >= total)
+    return {
+        "total": total,
+        "rows_returned": returned,
+        "next_page": page + 1 if more else None,
+        "has_more": more,
+    }
 
 
 def _auth_headers(*, user_token: str = "") -> dict:
@@ -168,6 +205,83 @@ def _walk_categories(nodes, trail, out):
         _walk_categories(nd.get("childs", []), path, out)
 
 
+# ---------------------------------------------------------------------------
+# Text matching (client-side title/require/exclude filters)
+# ---------------------------------------------------------------------------
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+# Ads fuse series and model number ("RTX4070"); split those so a keyword written
+# with a space still matches, and the other way round.
+_FUSED_RE = re.compile(r"^([a-z]{2,4})(\d{3,5})$")
+# A number and its unit: sellers write the same storage size as "128GB",
+# "128 GB", "128gb" or "256Gb", so a term given in one of those has to match all.
+_NUM_UNIT_RE = re.compile(r"^(\d+)\s*([a-z]+)$")
+
+
+def _tokens(text: str) -> set:
+    """Comparable word tokens of a title or keyword. Fused model codes are
+    replaced by their parts on both sides, so "RTX4070" and "RTX 4070" match
+    each other whichever one the keyword uses."""
+    out = set()
+    for token in _TOKEN_RE.findall(_fold(text or "")):
+        fused = _FUSED_RE.match(token)
+        out.update(fused.groups() if fused else [token])
+    return out
+
+
+def _term_forms(term: str) -> list[set]:
+    """The token sets a filter term may appear as. Everything is one form,
+    except a number with a unit, which is also accepted split in two -- that way
+    a term matches whichever way the seller spelled it."""
+    folded = _fold(term).strip()
+    match = _NUM_UNIT_RE.match(folded)
+    if not match:
+        return [_tokens(folded)]
+    number, unit = match.groups()
+    return [{f"{number}{unit}"}, {number, unit}]
+
+
+def _has_term(tokens: set, forms: list[set]) -> bool:
+    """Whether a title (or ad text) carries a filter term. A word matches in
+    full, or as the tail of a German compound ("kabel" catches "Ladekabel"), but
+    never one that merely starts with it -- otherwise "pro" would throw away
+    every "Prozessor" and be useless for separating an iPhone 13 from a 13 Pro."""
+    return any(all(any(token == word or token.endswith(word) for token in tokens)
+                   for word in form)
+               for form in forms)
+
+
+def _resolve_category(category: Union[int, str]) -> int:
+    """Resolve a category given as id or name to its numeric id, so the caller
+    can pass "PC-Zubehör & Software" instead of looking up 225 first."""
+    text = str(category).strip()
+    if text.isdigit():
+        return int(text)
+    flat: list = []
+    _walk_categories(_CATEGORIES, [], flat)
+    wanted = _norm(text)
+
+    exact = [(n, p) for n, p in flat if _norm(n.get("title") or "") == wanted]
+    if exact:
+        # a name can repeat deeper in the tree ("Elektronik" is also a
+        # Dienstleistungen child); the shallower one is what was meant
+        depth = min(p.count("/") for _, p in exact)
+        top = [(n, p) for n, p in exact if p.count("/") == depth]
+        if len(top) == 1:
+            return top[0][0]["id"]
+        paths = ", ".join(p for _, p in top)
+        raise ValueError(f"Category name {text!r} is ambiguous ({paths}). Pass the id instead.")
+
+    partial = [(n, p) for n, p in flat if wanted in _norm(p)]
+    if len(partial) == 1:
+        return partial[0][0]["id"]
+    if partial:
+        raise ValueError(f"Category {text!r} is ambiguous. Closest matches: "
+                         f"{', '.join(p for _, p in partial[:8])}. Pass the id instead.")
+    raise ValueError(f"Unknown category {text!r}. Use list_categories to find one -- and note "
+                     f"the tree stops fairly high up, so a finer cut like 'Grafikkarten' is an "
+                     f"attribute value (get_category_filters), not a category.")
+
+
 def _clean_description(value: Optional[str]) -> str:
     """Ad descriptions come as HTML (``<br />`` line breaks, entities);
     render them as plain, readable text."""
@@ -199,7 +313,10 @@ def _summarize_ad_hit(ad: dict) -> dict:
         "seller_account_type": _v(ad.get("seller-account-type")),
         "is_top_ad": any(f.get("name") == "TOPAD" for f in features),
         "start_date": _v(ad.get("start-date-time")),
-        "images": _image_urls(ad.get("pictures")),
+        # one preview url only -- the full set is in get_ad_detail, and the
+        # pictures themselves in get_ad_images
+        "image_url": (_image_urls(ad.get("pictures")) or [None])[0],
+        "image_count": len((ad.get("pictures") or {}).get("picture", [])),
         "url": _ad_link(ad, "self-public-website"),
     }
 
@@ -254,7 +371,7 @@ def _summarize_ad_detail(ad: dict) -> dict:
 async def search_kleinanzeigen(
     query: Optional[str] = None,
     *,
-    category_id: Optional[int] = None,
+    category: Optional[Union[int, str]] = None,
     attributes: Optional[dict[str, Union[str, list[str]]]] = None,
     location_id: Optional[int] = None,
     zip_code: Optional[str] = None,
@@ -265,28 +382,65 @@ async def search_kleinanzeigen(
     ad_type: Optional[AdType] = None,
     poster_type: Optional[PosterType] = None,
     sort: Sort = "RECOMMENDED",
-    rows: int = 30,
+    title_only: bool = False,
+    require: Optional[list[str]] = None,
+    exclude: Optional[list[str]] = None,
+    rows: int = 5,
     page: int = 0,
     picture_required: bool = False,
     buy_now_only: bool = False,
     shippable: bool = False,
+    include_top_ads: bool = True,
 ) -> dict:
-    """Search Kleinanzeigen listings by free-text keyword and/or category --
-    this is the endpoint the app's search screen itself uses, separate from the
-    Akamai-gated homepage recommendation carousel. Pass at least one of
-    ``query`` or ``category_id``.
+    """Search Kleinanzeigen listings. At least one of ``query`` or ``category``
+    is required.
 
-    Returns ``{total, results: [...]}``. ``results`` are summarized ads (id,
-    title, price, location, seller, top-ad flag, images, public listing url)
-    -- the numeric ``id`` is what ``get_ad_detail`` takes.
+    Scope to a ``category`` when you can: a bare ``query`` matches the **whole
+    ad text**, so it drags in accessories, bundles and spare parts, and with
+    ``sort="PRICE_ASCENDING"`` that junk takes the top spots.
+
+    **Put the model in ``query`` and every spec in ``require``.** Sellers write
+    a storage size as "128GB", "128 GB" or "256Gb" and many leave it out of the
+    title, so ``query="iPhone 13 128 GB", title_only=True`` finds almost nothing
+    while ``query="iPhone 13", require=["128gb"]`` finds what you meant.
+
+    Three filters, all applied here over what Kleinanzeigen returns:
+
+    - ``title_only=True`` -- every word of ``query`` must be in the **title**.
+      A glued-together model code matches either way round ("RTX4070" finds
+      "RTX 4070"), but a unit is not normalized: "128GB" does **not** find
+      "128 GB". Identity only.
+    - ``require`` -- all of these must appear in the **title or description**,
+      e.g. ``["128gb"]``. A number with its unit matches however it is spelled.
+      Capacity, RAM, colour, model year belong here.
+    - ``exclude`` -- drop ads whose **title** carries any of these, e.g.
+      ``["pro", "max"]``. Matches a whole word or a German compound tail
+      ("kabel" catches "Ladekabel"), never a mere prefix, so "pro" spares
+      "Prozessor". Model words are safe to exclude; **ordinary nouns are not**
+      ("akku", "display" appear in real listings you wanted).
+
+    Returns ``{total, rows_returned, next_page, has_more, results}``, plus
+    ``scanned`` when a client-side filter ran. ``results`` are trimmed ads
+    (id, title, ~250-char description, price, location, seller, one
+    ``image_url``); ``get_ad_detail`` has the full text and every attribute,
+    ``get_ad_images`` the pictures themselves. ``total`` is capped at 10000 by
+    Kleinanzeigen, so that value means "at least", not a real count.
+
+    Ads with ``is_top_ad`` are paid placements pinned above the sort order --
+    when you sort by price, set ``include_top_ads=False`` or the first rows
+    won't be the cheapest. A ``price_amount`` of ``null`` is normal: it means
+    "zu verschenken" or "VB" (see ``price_type``), and those sort first
+    ascending.
 
     Args:
         query: Free-text search term, e.g. "fahrrad" or "rtx 5080".
-        category_id: Restrict to a numeric category id, from
-            ``list_categories`` or a prior result's ``category_id``.
-        attributes: Category-specific attribute filters, e.g.
-            {"pc_zubehoer_software.art": "grafikkarten"}. An attribute marked
-            ``multi_select`` in ``get_category_filters`` also takes a list.
+        category: Category id (int) or name ("PC-Zubehör & Software");
+            ``list_categories`` finds it. Includes subcategories.
+        attributes: Category-specific filters, e.g.
+            {"pc_zubehoer_software.art": "grafikkarten"} -- narrows far better
+            than words in ``query``. ``get_category_filters(category)`` lists
+            the valid keys and values; one marked ``multi_select`` also takes a
+            list, e.g. {"...art": ["grafikkarten", "mainboards"]}.
         location_id: Restrict to a location/region, from ``search_locations``.
         zip_code: Restrict to a German postcode instead of ``location_id``.
         distance_km: Radius around ``location_id``/``zip_code`` in kilometres.
@@ -297,23 +451,37 @@ async def search_kleinanzeigen(
         sort: "RECOMMENDED" (default), "DATE_DESCENDING" (newest),
             "PRICE_ASCENDING", "PRICE_DESCENDING" or "DISTANCE_ASCENDING"
             (needs ``location_id``/``zip_code``).
-        rows: Max results to return (page size). Default 30.
-        page: Zero-based page index.
+        rows: Max results to return. Default 5; raise it when you actually need
+            more, since each ad costs a few hundred tokens.
+        page: Zero-based page index; pass back ``next_page`` to continue.
         picture_required: Only ads that have at least one picture.
         buy_now_only: Only ads with "Direkt kaufen" enabled.
         shippable: Only ads that offer shipping.
+        include_top_ads: Keep paid "TOP" placements in the results. Default
+            True (what the app does); set False for an honest price ranking.
     """
+    if not query and category is None:
+        raise ValueError("Provide 'query' and/or 'category'.")
+    _check_range("price", min_price, max_price)
+    rows = _rows(rows)
+
+    wanted = _tokens(query) if (title_only and query) else set()
+    required = [_term_forms(t) for t in (require or []) if str(t).strip()]
+    excluded = [_term_forms(t) for t in (exclude or []) if str(t).strip()]
+    post_filtered = bool(wanted or required or excluded)
+
     params: list[tuple[str, str]] = [
-        ("page", str(page)), ("size", str(rows)), ("sortType", sort),
+        ("sortType", sort),
         ("pictureRequired", str(picture_required).lower()),
         ("buyNowOnly", str(buy_now_only).lower()),
         ("shippable", str(shippable).lower()),
-        ("includeTopAds", "true"), ("limitTotalResultCount", "true"),
+        ("includeTopAds", str(include_top_ads).lower()),
+        ("limitTotalResultCount", "true"),
     ]
     if query:
         params.append(("q", query))
-    if category_id is not None:
-        params.append(("categoryId", str(category_id)))
+    if category is not None:
+        params.append(("categoryId", str(_resolve_category(category))))
     if location_id is not None:
         params.append(("locationId", str(location_id)))
     if zip_code is not None:
@@ -335,11 +503,46 @@ async def search_kleinanzeigen(
         joined = ",".join(value) if isinstance(value, list) else value
         params.append((f"attr[{key}]", joined))
 
-    payload = _ns(await _get("ads.json", params=params), "ads")
-    return {
-        "total": (payload.get("paging") or {}).get("numFound"),
-        "results": [_summarize_ad_hit(ad) for ad in payload.get("ad", [])],
-    }
+    def keep(hit: dict) -> bool:
+        tokens = _tokens(hit["title"])
+        if wanted and not wanted <= tokens:
+            return False
+        if any(_has_term(tokens, forms) for forms in excluded):
+            return False
+        if required:
+            # a spec is written wherever the seller felt like it, so look at the
+            # whole ad rather than demanding it in the title
+            text = tokens | _tokens(hit["description"])
+            if not all(_has_term(text, forms) for forms in required):
+                return False
+        return True
+
+    # A client-side filter has to page deeper than the caller asked for, so it
+    # pulls full pages and keeps going until `rows` survivors are found.
+    page_size = MAX_ROWS if post_filtered else rows
+    results: list = []
+    cursor, total, scanned = page, None, 0
+    while True:
+        page_params = params + [("page", str(cursor)), ("size", str(page_size))]
+        payload = _ns(await _get("ads.json", params=page_params), "ads")
+        ads = payload.get("ad", [])
+        total = (payload.get("paging") or {}).get("numFound", total)
+        for ad in ads:
+            scanned += 1
+            hit = _summarize_ad_hit(ad)
+            if keep(hit):
+                results.append(hit)
+                if len(results) >= rows:
+                    break
+        if not post_filtered or len(results) >= rows or not ads or scanned >= FILTER_MAX_SCAN:
+            break
+        cursor += 1
+
+    consumed = page * page_size + scanned
+    result = {**_pagination(total, cursor, consumed, len(results)), "results": results}
+    if post_filtered:
+        result["scanned"] = scanned
+    return result
 
 
 @mcp.tool()
@@ -472,7 +675,7 @@ async def search_locations(query: str) -> list[dict]:
 
 
 @mcp.tool()
-async def get_category_filters(category_id: int) -> list[dict]:
+async def get_category_filters(category: Union[int, str]) -> list[dict]:
     """The attribute filters a category supports, for
     ``search_kleinanzeigen(attributes=...)``. These narrow a search far better
     than extra words in ``query`` -- e.g. in "PC-Zubehör & Software" they cut
@@ -487,7 +690,7 @@ async def get_category_filters(category_id: int) -> list[dict]:
     Args:
         category: Category id (int) or name, same as ``search_kleinanzeigen``.
     """
-    data = await _get(f"ads/search-metadata/{category_id}.json")
+    data = await _get(f"ads/search-metadata/{_resolve_category(category)}.json")
     payload = _ns(data, "ads-search-options")
     attributes = (payload.get("attributes") or {}).get("attribute", [])
     return [
