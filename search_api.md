@@ -2,17 +2,15 @@
 
 The Kleinanzeigen Android app talks to a REST-ish JSON API split across a few
 hosts. Responses from `api.kleinanzeigen.de` are JAXB-serialized XML turned
-into JSON (see [Response shape](#response-shape) below) -- this is the same
-eBay Classifieds Group (ECG) platform family willhaben runs on, hence the
-similar quirks. `gateway.kleinanzeigen.de` (newer services) mostly returns
-plain JSON.
+into JSON (see [Response shape](#response-shape) below).
+`gateway.kleinanzeigen.de` (newer services) mostly returns plain JSON.
 
 ## Hosts
 
 | Host | Purpose |
 |---|---|
 | `api.kleinanzeigen.de` | Search, ads, categories, seller profile, locations -- the classic REST API |
-| `gateway.kleinanzeigen.de` | Newer services: seller reputation, homepage feed, consent, experiments, the Akamai-gated recommendation search |
+| `gateway.kleinanzeigen.de` | Newer services: seller reputation, homepage feed, consent, experiments, recommendation search |
 | `img.kleinanzeigen.de` | Image CDN |
 | `autocomplete.kleinanzeigen.de` | Algolia-backed search-suggestion typeahead |
 
@@ -32,28 +30,14 @@ plain JSON.
 
 ## Auth
 
-Unlike willhaben (server-issued token) or Geizhals (per-request HMAC JWT),
-`api.kleinanzeigen.de` needs only a **static** Basic-auth credential baked into
-the app plus a **free-form client id** (`x-ebayk-app`): a UUIDv4 immediately
+`api.kleinanzeigen.de` needs a **static** Basic-auth credential baked into the
+app plus a **free-form client id** (`x-ebayk-app`): a UUIDv4 immediately
 followed by the epoch-millis timestamp of when it was generated, no separator
 (e.g. `7243bedb-2427-4f72-bf89-567ecb1c74661789285561410`). Across several
 captured app launches this id was different every time and a brand-new,
 never-before-seen value was accepted immediately -- there's no visible
 registration call, so it looks like the server does not validate it, just logs
 it. `main.py` generates one per process.
-
-## Akamai Bot Manager (gateway only, not a blocker for search)
-
-The app also runs Akamai's Bot Manager SDK (`Akamai BAPSDK/4.2.1`) on cold
-start: `GET api.kleinanzeigen.de/_bm/get_params` returns an encrypted
-`serversidesignal`, `GET api.kleinanzeigen.de/_sec/sdk_challenge.js` returns an
-obfuscated sensor-computation script, and the resulting `x-acf-sensor-data`
-header shows up on `POST gateway.kleinanzeigen.de/fp-pla-kaos/ad-search/v5/search`
--- which turned out to be the **homepage recommendation carousel**, not the
-search screen. The real search (`GET api.kleinanzeigen.de/api/ads.json`, see
-below) carries no sensor header and works fine. `_bm/get_info` was hard-blocked
-by Akamai's edge in our capture environment; not investigated further since it
-isn't needed for search.
 
 ## Confirmed endpoints
 
@@ -71,13 +55,6 @@ isn't needed for search.
 | `POST` | `autocomplete.kleinanzeigen.de/1/indexes/ebayk_prod_suggest/query` | Algolia search-suggestion typeahead (captured, auth not yet inspected) |
 | `GET` | `api.kleinanzeigen.de/api/v2/counters/ads/watchlist?adIds=<id>` | Whether an ad is on the current (anonymous) watchlist -- only the read side was captured, no add/remove call |
 | `GET` | `img.kleinanzeigen.de/api/v1/prod-ads/images/{hash}?rule=$_N.AUTO` | Image CDN; `N` selects size (`0`=thumbnail, `1`=large, `2`=teaser, `59`=extraLarge, `57`=XXL) |
-
-### Pending (seen in traffic, not yet mapped to a tool)
-- Favorites/watchlist: only the read-side counter was captured (see above);
-  the add/remove call wasn't triggered during browsing.
-- Messaging/contact-seller: not browsed.
-- Login: not browsed -- `x-ebayk-userid-token` stays empty throughout, so
-  everything documented here works anonymously.
 
 ## Search
 
