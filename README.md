@@ -5,6 +5,12 @@ listings and pull ad and seller details. It wraps the Kleinanzeigen Android
 app's API (`api.kleinanzeigen.de` / `gateway.kleinanzeigen.de`) and returns the
 important fields to the AI.
 
+<p align="center">
+  <a href="https://www.kleinanzeigen.de/"><img alt="Listings" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FSamxel%2Fkleinanzeigen-mcp%2Fmain%2Fcoverage.json&query=%24.listings&label=Listings&color=green&suffix=%20live&cacheSeconds=3600"></a>
+  <a href="https://themen.kleinanzeigen.de/ueber-uns/"><img alt="Monthly visitors" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FSamxel%2Fkleinanzeigen-mcp%2Fmain%2Fcoverage.json&query=%24.visitors&label=Visitors&color=ff7300&suffix=%20%2Fmonth&cacheSeconds=3600"></a>
+  <a href="https://themen.kleinanzeigen.de/ueber-uns/"><img alt="Commercial users" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FSamxel%2Fkleinanzeigen-mcp%2Fmain%2Fcoverage.json&query=%24.commercial_users&label=Commercial%20users&color=1e6fff&cacheSeconds=3600"></a>
+</p>
+
 ## Highlights
 
 - **Visual Listing Analysis**  
@@ -166,6 +172,9 @@ and set the tools' dropdown on the right to **Always allow**.
   live `api/categories.json` (which ships the tree wrapped in JAXB envelopes
   and a single "Alle Kategorien" pseudo-root). Re-run it if Kleinanzeigen
   changes their categories.
+- `coverage.json` holds the platform counts shown in the badges above.
+  `scripts/update_coverage.py` refreshes it from Kleinanzeigen's public "Über
+  uns" page and a daily GitHub Action commits any change.
 - API details are documented in [`search_api.md`](search_api.md).
 - This uses Kleinanzeigen's internal mobile API, not an official one. Be nice to it.
 
