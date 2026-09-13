@@ -2,6 +2,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Image
 import httpx
 import asyncio
+import functools
 import html
 import json
 import re
@@ -56,6 +57,49 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(mes
 Sort = Literal["RECOMMENDED", "DATE_DESCENDING", "PRICE_ASCENDING", "PRICE_DESCENDING", "DISTANCE_ASCENDING"]
 AdType = Literal["OFFERED", "WANTED"]
 PosterType = Literal["PRIVATE", "COMMERCIAL"]
+
+
+def _upstream_message(status: int, what: str, body: str = "") -> str:
+    """Phrase an HTTP failure in terms the caller can act on, without the
+    internal url and MDN link httpx puts in its own message."""
+    if status == 404:
+        return f"no {what} found -- wrong id, or the ad has been taken down"
+    if status == 400:
+        return f"Kleinanzeigen rejected the {what} request (400); check the arguments you passed"
+    if status in (401, 403):
+        # a blocked IP range and a stale credential both come back as 403, but
+        # only the block says so in the body -- they need opposite fixes
+        if "gesperrt" in body or "blocked" in body.lower():
+            return (f"Kleinanzeigen blocked this IP range on the {what} request ({status}). Their "
+                    f"anti-fraud rejects whole ranges (VPN and datacenter IPs in particular), so "
+                    f"this usually needs a different connection, not a retry. Search and ad "
+                    f"lookups are unaffected -- only the seller profile enforces it.")
+        return (f"Kleinanzeigen refused the {what} request ({status}) -- the client credential "
+                f"in main.py (KA_BASIC_AUTH) may be outdated")
+    if status == 429:
+        return f"Kleinanzeigen rate-limited the {what} request (429) -- slow down and retry later"
+    return f"Kleinanzeigen failed on the {what} request (HTTP {status})"
+
+
+def _tool_errors(what: str):
+    """Return failures as ``{"error": ...}`` rather than raising, so every tool
+    fails the same readable way and the caller sees *why* -- an MCP client turns
+    a raised exception into a bare "Error executing tool". ``what`` names the
+    thing being fetched, for the message."""
+    def decorator(fn):
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            try:
+                return await fn(*args, **kwargs)
+            except ValueError as exc:  # our own argument validation
+                return {"error": str(exc)}
+            except httpx.HTTPStatusError as exc:
+                return {"error": _upstream_message(exc.response.status_code, what, exc.response.text)}
+            except httpx.HTTPError as exc:
+                return {"error": f"could not reach Kleinanzeigen for the {what} request "
+                                 f"({type(exc).__name__})"}
+        return wrapper
+    return decorator
 
 
 def _rows(rows: int) -> int:
@@ -368,6 +412,7 @@ def _summarize_ad_detail(ad: dict) -> dict:
 # Tools
 # ---------------------------------------------------------------------------
 @mcp.tool()
+@_tool_errors("search")
 async def search_kleinanzeigen(
     query: Optional[str] = None,
     *,
@@ -546,6 +591,7 @@ async def search_kleinanzeigen(
 
 
 @mcp.tool()
+@_tool_errors("ad")
 async def get_ad_detail(ad_id: int) -> dict:
     """Everything about one ad: the full description, itemised attributes
     ("Zustand", "Versand", ...), precise location with coordinates, shipping
@@ -587,7 +633,7 @@ async def get_ad_images(ad_id: int, max_images: int = 4) -> list:
     try:
         data = await _get(f"ads/{ad_id}.json")
     except httpx.HTTPStatusError as exc:
-        return [f"could not fetch ad {ad_id} (HTTP {exc.response.status_code})"]
+        return [_upstream_message(exc.response.status_code, "ad", exc.response.text)]
     except httpx.HTTPError as exc:
         return [f"could not reach Kleinanzeigen for ad {ad_id} ({type(exc).__name__})"]
 
@@ -613,6 +659,7 @@ async def get_ad_images(ad_id: int, max_images: int = 4) -> list:
 
 
 @mcp.tool()
+@_tool_errors("seller")
 async def get_seller_info(seller_id: int) -> dict:
     """Who is selling: name, private vs commercial, member-since date, how
     many ads they have run, followers, typical reply speed and Kleinanzeigen's
@@ -620,16 +667,34 @@ async def get_seller_info(seller_id: int) -> dict:
     doesn't answer -- a one-day-old account dumping twenty phones reads very
     differently from a five-year member with one listing.
 
+    The profile half is the one endpoint Kleinanzeigen guards with IP-range
+    anti-fraud, so from a VPN or datacenter address it can 403 while everything
+    else works. That is reported in ``partial`` rather than failing the call.
+
     Args:
         seller_id: The seller's user id, from a search hit's or ad detail's
             ``seller_id``.
     """
-    profile = await _get(f"users/public/{seller_id}/profile.json")
-    reputation = await _get_gateway(
-        f"user-reputation-service/public/users/{seller_id}/reputation-summary")
+    # two independent services -- report whichever half answers instead of
+    # losing a usable trust check to the other one's failure
+    async def half(coro, name):
+        try:
+            return await coro, None
+        except httpx.HTTPStatusError as exc:
+            return {}, f"{name}: {_upstream_message(exc.response.status_code, name, exc.response.text)}"
+        except httpx.HTTPError as exc:
+            return {}, f"{name}: could not reach Kleinanzeigen ({type(exc).__name__})"
+
+    profile, profile_error = await half(
+        _get(f"users/public/{seller_id}/profile.json"), "profile")
+    reputation, reputation_error = await half(
+        _get_gateway(f"user-reputation-service/public/users/{seller_id}/reputation-summary"),
+        "reputation")
+    if profile_error and reputation_error:
+        return {"error": f"{profile_error}; {reputation_error}"}
     counters = profile.get("counters") or {}
     result = {
-        "id": profile.get("id"),
+        "id": profile.get("id") or seller_id,
         "name": profile.get("contactName"),
         "account_type": profile.get("posterType"),
         "member_since": profile.get("userSince"),
@@ -641,10 +706,14 @@ async def get_seller_info(seller_id: int) -> dict:
         "reputation_score": (reputation.get("total") or {}).get("averageRating"),
         "reputation_review_count": (reputation.get("total") or {}).get("ratingReviewCount"),
     }
+    partial = [e for e in (profile_error, reputation_error) if e]
+    if partial:
+        result["partial"] = "; ".join(partial)
     return result
 
 
 @mcp.tool()
+@_tool_errors("location")
 async def search_locations(query: str) -> list[dict]:
     """Look up location ids for ``search_kleinanzeigen``'s ``location_id``,
     by name prefix (as the app's location picker does). Covers federal states,
@@ -675,6 +744,7 @@ async def search_locations(query: str) -> list[dict]:
 
 
 @mcp.tool()
+@_tool_errors("category filter")
 async def get_category_filters(category: Union[int, str]) -> list[dict]:
     """The attribute filters a category supports, for
     ``search_kleinanzeigen(attributes=...)``. These narrow a search far better
