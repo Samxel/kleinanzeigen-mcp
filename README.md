@@ -5,14 +5,6 @@ listings and pull ad and seller details. It wraps the Kleinanzeigen Android
 app's API (`api.kleinanzeigen.de` / `gateway.kleinanzeigen.de`) and returns the
 important fields to the AI.
 
-> **Heads up on Akamai.** The app runs Akamai Bot Manager on cold start, and
-> its sensor payload shows up on `gateway.kleinanzeigen.de`'s homepage
-> recommendation carousel -- but the actual search screen
-> (`api.kleinanzeigen.de/api/ads.json`, what every tool here uses) needs no
-> such payload and works fine. See [`search_api.md`](search_api.md) for
-> details, and for the handful of endpoints (favorites, messaging, login)
-> that are seen in traffic but not wrapped in a tool yet.
-
 ## Highlights
 
 - **Visual Listing Analysis**  
