@@ -1,0 +1,41 @@
+name: Kleinanzeigen changed something
+description: A filter, id, endpoint or header stopped working because Kleinanzeigen changed upstream
+labels: ["upstream-change", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Use this when the code is fine but Kleinanzeigen changed their API: a 401
+        on the client credential, category ids that no longer match, missing
+        attributes, a changed response shape, and so on.
+  - type: textarea
+    id: symptom
+    attributes:
+      label: What stopped working?
+      placeholder: get_ad_detail returns 401, or search_kleinanzeigen(categoryId=225) returns 0 hits, ...
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of change?
+      options:
+        - Client credential rejected (401)
+        - Category id or attribute changed or missing
+        - Response format changed
+        - Endpoint moved or removed
+        - Other or not sure
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Request/response, ids, or captured values that show the change. Rendered as code.
+      render: shell
+  - type: checkboxes
+    id: recrawl
+    attributes:
+      label: Data
+      options:
+        - label: This probably needs the bundled data (data/) to be re-crawled
