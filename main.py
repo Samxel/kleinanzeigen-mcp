@@ -1,5 +1,6 @@
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Image
+from mcp.server.mcpserver.exceptions import ToolError
 import httpx
 import asyncio
 import functools
@@ -82,31 +83,32 @@ def _upstream_message(status: int, what: str, body: str = "") -> str:
 
 
 def _tool_errors(what: str):
-    """Return failures as ``{"error": ...}`` rather than raising, so every tool
-    fails the same readable way and the caller sees *why* -- an MCP client turns
-    a raised exception into a bare "Error executing tool". ``what`` names the
-    thing being fetched, for the message."""
+    """Turn upstream failures into a ``ToolError`` the model can read, rather
+    than a raw httpx error; any exception that is not a ``ToolError`` would only
+    reach it as "Error executing tool". ``what`` names the thing being fetched,
+    for the message."""
     def decorator(fn):
         @functools.wraps(fn)
         async def wrapper(*args, **kwargs):
             try:
                 return await fn(*args, **kwargs)
-            except ValueError as exc:  # our own argument validation
-                return {"error": str(exc)}
             except httpx.HTTPStatusError as exc:
-                return {"error": _upstream_message(exc.response.status_code, what, exc.response.text)}
+                raise ToolError(_upstream_message(exc.response.status_code, what, exc.response.text)) from exc
             except httpx.HTTPError as exc:
-                return {"error": f"could not reach Kleinanzeigen for the {what} request "
-                                 f"({type(exc).__name__})"}
+                raise ToolError(f"could not reach Kleinanzeigen for the {what} request "
+                                f"({type(exc).__name__})") from exc
         return wrapper
     return decorator
 
 
-def _rows(rows: int) -> int:
-    """Validate a page size rather than quietly clamping 0 up to 1."""
+def _rows(rows: int, page: int = 0) -> int:
+    """Validate a page size rather than quietly clamping 0 up to 1, and a page
+    index, which Kleinanzeigen would answer for -1 as if it were 0."""
     rows = int(rows)
     if rows < 1:
-        raise ValueError(f"rows must be at least 1 (got {rows}).")
+        raise ToolError(f"rows must be at least 1 (got {rows}).")
+    if page < 0:
+        raise ToolError(f"page must be 0 or more (got {page}).")
     return min(rows, MAX_ROWS)
 
 
@@ -114,7 +116,7 @@ def _check_range(name: str, low, high) -> None:
     """Reject an inverted range instead of letting Kleinanzeigen drop the filter
     and quietly answer with everything."""
     if low is not None and high is not None and low > high:
-        raise ValueError(
+        raise ToolError(
             f"min_{name} ({low}) is above max_{name} ({high}) -- an inverted range is "
             f"ignored by Kleinanzeigen and would silently return unfiltered results. Swap them."
         )
@@ -313,17 +315,17 @@ def _resolve_category(category: Union[int, str]) -> int:
         if len(top) == 1:
             return top[0][0]["id"]
         paths = ", ".join(p for _, p in top)
-        raise ValueError(f"Category name {text!r} is ambiguous ({paths}). Pass the id instead.")
+        raise ToolError(f"Category name {text!r} is ambiguous ({paths}). Pass the id instead.")
 
     partial = [(n, p) for n, p in flat if wanted in _norm(p)]
     if len(partial) == 1:
         return partial[0][0]["id"]
     if partial:
-        raise ValueError(f"Category {text!r} is ambiguous. Closest matches: "
-                         f"{', '.join(p for _, p in partial[:8])}. Pass the id instead.")
-    raise ValueError(f"Unknown category {text!r}. Use list_categories to find one -- and note "
-                     f"the tree stops fairly high up, so a finer cut like 'Grafikkarten' is an "
-                     f"attribute value (get_category_filters), not a category.")
+        raise ToolError(f"Category {text!r} is ambiguous. Closest matches: "
+                        f"{', '.join(p for _, p in partial[:8])}. Pass the id instead.")
+    raise ToolError(f"Unknown category {text!r}. Use list_categories to find one -- and note "
+                    f"the tree stops fairly high up, so a finer cut like 'Grafikkarten' is an "
+                    f"attribute value (get_category_filters), not a category.")
 
 
 def _clean_description(value: Optional[str]) -> str:
@@ -506,9 +508,9 @@ async def search_kleinanzeigen(
             True (what the app does); set False for an honest price ranking.
     """
     if not query and category is None:
-        raise ValueError("Provide 'query' and/or 'category'.")
+        raise ToolError("Provide 'query' and/or 'category'.")
     _check_range("price", min_price, max_price)
-    rows = _rows(rows)
+    rows = _rows(rows, page)
 
     wanted = _tokens(query) if (title_only and query) else set()
     required = [_term_forms(t) for t in (require or []) if str(t).strip()]
@@ -609,6 +611,7 @@ async def get_ad_detail(ad_id: int) -> dict:
 
 
 @mcp.tool(structured_output=False)
+@_tool_errors("ad")
 async def get_ad_images(ad_id: int, max_images: int = 4) -> list:
     """Fetch an ad's photos and return them as images you can actually look at.
 
@@ -630,12 +633,7 @@ async def get_ad_images(ad_id: int, max_images: int = 4) -> list:
         max_images: How many photos to fetch, 1-10. Default 4.
     """
     max_images = max(1, min(int(max_images), 10))
-    try:
-        data = await _get(f"ads/{ad_id}.json")
-    except httpx.HTTPStatusError as exc:
-        return [_upstream_message(exc.response.status_code, "ad", exc.response.text)]
-    except httpx.HTTPError as exc:
-        return [f"could not reach Kleinanzeigen for ad {ad_id} ({type(exc).__name__})"]
+    data = await _get(f"ads/{ad_id}.json")
 
     ad = _ns(data, "ad")
     urls = _image_urls(ad.get("pictures"))[:max_images]
@@ -691,7 +689,7 @@ async def get_seller_info(seller_id: int) -> dict:
         _get_gateway(f"user-reputation-service/public/users/{seller_id}/reputation-summary"),
         "reputation")
     if profile_error and reputation_error:
-        return {"error": f"{profile_error}; {reputation_error}"}
+        raise ToolError(f"{profile_error}; {reputation_error}")
     counters = profile.get("counters") or {}
     result = {
         "id": profile.get("id") or seller_id,
