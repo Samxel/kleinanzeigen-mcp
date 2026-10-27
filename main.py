@@ -358,65 +358,81 @@ def _clean_description(value: Optional[str]) -> str:
     return html.unescape(text).strip()
 
 
-def _ad_link(ad: dict, rel: str) -> Optional[str]:
-    return next((l["href"] for l in ad.get("link", []) if l.get("rel") == rel), None)
+def _ad_url(ad_id) -> Optional[str]:
+    """The ad's web page. The site finds an ad by its id alone, so the title
+    slug and category in the link the API returns are only extra tokens."""
+    return f"https://www.kleinanzeigen.de/s-anzeige/{ad_id}" if ad_id else None
+
+
+def _price(ad: dict) -> dict:
+    """The price fields worth sending: the currency only when it is not EUR,
+    and the price type only when it says more than "this is the price" (VB,
+    zu verschenken, ...)."""
+    price = ad.get("price") or {}
+    currency = _v(_v(price.get("currency-iso-code")))
+    price_type = _v(price.get("price-type"))
+    return {
+        "price_amount": _v(price.get("amount")),
+        "price_currency": currency if currency != "EUR" else None,
+        "price_type": price_type if price_type != "SPECIFIED_AMOUNT" else None,
+    }
+
+
+def _shipping(ad: dict) -> list[str]:
+    return [o["id"] for o in (ad.get("shipping-options") or {}).get("shipping-option", [])]
 
 
 def _summarize_ad_hit(ad: dict) -> dict:
-    price = ad.get("price") or {}
     address = ad.get("ad-address") or {}
     features = (ad.get("features-active") or {}).get("feature-active", [])
     return {
         "id": ad.get("id"),
         "title": html.unescape(_v(ad.get("title")) or ""),
         "description": _clean_description(_v(ad.get("description"))),
-        "price_amount": _v(price.get("amount")),
-        "price_currency": _v(_v(price.get("currency-iso-code"))),
-        "price_type": _v(price.get("price-type")),
+        **_price(ad),
         "location": _v(address.get("state")),
         "zip_code": _v(address.get("zip-code")),
+        "ships": bool(_shipping(ad)),
         "category_id": (ad.get("category") or {}).get("id"),
         "seller_id": _v(ad.get("user-id")),
         "store_title": _v(ad.get("store-title")),
         "seller_account_type": _v(ad.get("seller-account-type")),
-        "is_top_ad": any(f.get("name") == "TOPAD" for f in features),
-        "start_date": _v(ad.get("start-date-time")),
-        # one preview url only -- the full set is in get_ad_detail, and the
-        # pictures themselves in get_ad_images
-        "image_url": (_image_urls(ad.get("pictures")) or [None])[0],
+        "is_top_ad": any(f.get("name") == "TOPAD" for f in features) or None,
+        "start_date": (_v(ad.get("start-date-time")) or "")[:16] or None,
+        # the photos themselves are in get_ad_images
         "image_count": len((ad.get("pictures") or {}).get("picture", [])),
-        "url": _ad_link(ad, "self-public-website"),
+        "url": _ad_url(ad.get("id")),
     }
 
 
 def _summarize_attributes(attributes: dict) -> dict:
-    """Flatten an ad's `attributes.attribute[]` list into {name: label}, e.g.
-    {"pc_zubehoer_software.condition": "Neu"}."""
+    """Flatten an ad's `attributes.attribute[]` list into {label: value}, e.g.
+    {"Zustand": "Neu"}. The labels are what the ad page shows; the filter keys
+    behind them ("pc_zubehoer_software.condition") come from
+    get_category_filters."""
     out = {}
     for attr in (attributes or {}).get("attribute", []):
         values = attr.get("value") or []
         label = ", ".join(v.get("localized-label", v.get("value", "")) for v in values)
-        out[attr.get("name")] = label
+        out[attr.get("localized-label") or attr.get("name")] = label
     return out
 
 
 def _summarize_ad_detail(ad: dict) -> dict:
-    price = ad.get("price") or {}
     address = ad.get("ad-address") or {}
     category = ad.get("category") or {}
+    ad_type = _v(ad.get("ad-type"))
+    status = _v(ad.get("ad-status"))
     return {
         "id": ad.get("id"),
         "title": html.unescape(_v(ad.get("title")) or ""),
         "description": _clean_description(_v(ad.get("description"))),
-        "ad_type": _v(ad.get("ad-type")),
-        "ad_status": _v(ad.get("ad-status")),
-        "price_amount": _v(price.get("amount")),
-        "price_currency": _v(_v(price.get("currency-iso-code"))),
-        "price_type": _v(price.get("price-type")),
+        # only the unusual cases: a wanted ad, or one no longer active
+        "ad_type": ad_type if ad_type != "OFFERED" else None,
+        "ad_status": status if status != "ACTIVE" else None,
+        **_price(ad),
         "location": _v(address.get("state")),
         "zip_code": _v(address.get("zip-code")),
-        "latitude": _v(address.get("latitude")),
-        "longitude": _v(address.get("longitude")),
         "category_id": category.get("id"),
         "category_name": _v(category.get("localized-name")),
         "seller_id": _v(ad.get("user-id")),
@@ -424,11 +440,11 @@ def _summarize_ad_detail(ad: dict) -> dict:
         "seller_account_type": _v(ad.get("seller-account-type")),
         "seller_rating": _v((ad.get("user-rating") or {}).get("averageRating")),
         "attributes": _summarize_attributes(ad.get("attributes")),
-        "shipping_options": [o["id"] for o in (ad.get("shipping-options") or {}).get("shipping-option", [])],
-        "buy_now": (ad.get("buy-now") or {}).get("selected") == "true",
-        "start_date": _v(ad.get("start-date-time")),
-        "images": _image_urls(ad.get("pictures")),
-        "url": _ad_link(ad, "self-public-website"),
+        "shipping_options": _shipping(ad),
+        "buy_now": (ad.get("buy-now") or {}).get("selected") == "true" or None,
+        "start_date": (_v(ad.get("start-date-time")) or "")[:16] or None,
+        "image_count": len(_image_urls(ad.get("pictures"))),
+        "url": _ad_url(ad.get("id")),
     }
 
 
@@ -490,8 +506,9 @@ async def search_kleinanzeigen(
 
     Returns ``{total, rows_returned, next_page, has_more, results}``, plus
     ``scanned`` when a client-side filter ran. ``results`` are trimmed ads
-    (id, title, ~250-char description, price, location, seller, one
-    ``image_url``); ``get_ad_detail`` has the full text and every attribute,
+    (id, title, ~250-char description, price, location, whether it ships,
+    seller, ``image_count``, link); ``get_ad_detail`` has the full text and
+    every attribute,
     ``get_ad_images`` the pictures themselves. ``total`` is capped at 10000 by
     Kleinanzeigen, so that value means "at least", not a real count.
 
@@ -618,8 +635,8 @@ async def search_kleinanzeigen(
 @_tool_errors("ad")
 async def get_ad_detail(ad_id: int) -> dict:
     """Everything about one ad: the full description, itemised attributes
-    ("Zustand", "Versand", ...), precise location with coordinates, shipping
-    options and image urls. Run it on an ``id`` from a search hit whenever the
+    ("Zustand", "Versand", ...), location, shipping options and how many photos
+    it has. Run it on an ``id`` from a search hit whenever the
     trimmed search summary isn't enough to answer.
 
     To actually look at the photos use ``get_ad_images``; for the seller's
@@ -737,8 +754,7 @@ async def get_seller_info(seller_id: int) -> dict:
 async def search_locations(query: str) -> list[dict]:
     """Look up location ids for ``search_kleinanzeigen``'s ``location_id``,
     by name prefix (as the app's location picker does). Covers federal states,
-    cities and districts. Returns ``[{id, name, region, latitude, longitude,
-    radius_km}]``.
+    cities and districts. Returns ``[{id, name, region, radius_km}]``.
 
     Pair the id with ``distance_km`` to search a radius. For a plain postcode
     search you don't need this -- pass ``zip_code`` to the search directly.
@@ -756,8 +772,6 @@ async def search_locations(query: str) -> list[dict]:
             "id": loc.get("id"),
             "name": _v(loc.get("localized-name")),
             "region": _v(regions[0].get("localized-name")) if regions else None,
-            "latitude": _v(loc.get("latitude")),
-            "longitude": _v(loc.get("longitude")),
             "radius_km": _v(loc.get("radius")),
         })
     return out
