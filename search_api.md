@@ -37,7 +37,7 @@ followed by the epoch-millis timestamp of when it was generated, no separator
 captured app launches this id was different every time and a brand-new,
 never-before-seen value was accepted immediately -- there's no visible
 registration call, so it looks like the server does not validate it, just logs
-it. `main.py` generates one per process.
+it. `kleinanzeigen/api.py` generates one per process.
 
 ## Confirmed endpoints
 
@@ -95,7 +95,8 @@ HTML with `<br />` line breaks and entities), `price.amount`/`price.currency-iso
 `ad-address`, `category.id`, `user-id`, `store-title`, `seller-account-type`,
 `features-active` (look for `name: "TOPAD"`), `pictures.picture[].link[]`
 (pick `rel: "large"`), and a `link[]` array (`rel: "self-public-website"` is
-the human-facing URL). See `_summarize_ad_hit` in `main.py`.
+the human-facing URL; the site also finds an ad by `/s-anzeige/<id>` alone).
+See `summarize_ad_hit` in `kleinanzeigen/summaries.py`.
 
 ## Ad detail
 
@@ -109,7 +110,7 @@ search hit but far richer: full `description`, precise `ad-address`
 (OFFERED/WANTED), `ad-status`, `attributes.attribute[]` (name + localized
 value per attribute), `shipping-options.shipping-option[].id`, `buy-now`,
 `user-rating`, and `locations.location[]` (the resolved location tree entry
-for the ad's postcode). See `_summarize_ad_detail` in `main.py`.
+for the ad's postcode). See `summarize_ad_detail` in `kleinanzeigen/summaries.py`.
 
 ## Seller info
 
@@ -154,8 +155,8 @@ Every scalar field on `api.kleinanzeigen.de` comes wrapped as `{"value": ...}`
 (a JAXB/XML-to-JSON artifact), and some are wrapped twice (e.g.
 `price["currency-iso-code"] = {"value": {"value": "EUR", "localized-label": "€"}}`).
 Top-level collections are keyed by their XML namespace URI, e.g.
-`"{http://www.ebayclassifiedsgroup.com/schema/ad/v1}ads"`. `main.py`'s `_v`
-and `_ns` helpers unwrap both. `gateway.kleinanzeigen.de` and the seller
+`"{http://www.ebayclassifiedsgroup.com/schema/ad/v1}ads"`. `kleinanzeigen/api.py`'s `unwrap`
+and `collection` helpers unwrap both. `gateway.kleinanzeigen.de` and the seller
 profile/reputation endpoints are plain JSON with no such wrapping.
 
 ## Categories
