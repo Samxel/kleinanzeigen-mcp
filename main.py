@@ -82,6 +82,28 @@ def _upstream_message(status: int, what: str, body: str = "") -> str:
     return f"Kleinanzeigen failed on the {what} request (HTTP {status})"
 
 
+def _prune(value):
+    """Drop the null fields from every dict in `value`; lists keep their items."""
+    if isinstance(value, dict):
+        return {k: _prune(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_prune(v) for v in value]
+    return value
+
+
+def _tool(fn):
+    """Register `fn` as a tool whose result goes out as compact JSON with its
+    null fields left out. Left to the SDK, a dict is pretty-printed with a
+    two-space indent and a list becomes one text block per item.
+    structured_output stays off: it would send every result a second time as
+    structuredContent and add an output schema to the tool listing."""
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        result = await fn(*args, **kwargs)
+        return json.dumps(_prune(result), ensure_ascii=False, separators=(",", ":"))
+    return mcp.tool(structured_output=False)(wrapper)
+
+
 def _tool_errors(what: str):
     """Turn upstream failures into a ``ToolError`` the model can read, rather
     than a raw httpx error; any exception that is not a ``ToolError`` would only
@@ -413,7 +435,7 @@ def _summarize_ad_detail(ad: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
-@mcp.tool()
+@_tool
 @_tool_errors("search")
 async def search_kleinanzeigen(
     query: Optional[str] = None,
@@ -592,7 +614,7 @@ async def search_kleinanzeigen(
     return result
 
 
-@mcp.tool()
+@_tool
 @_tool_errors("ad")
 async def get_ad_detail(ad_id: int) -> dict:
     """Everything about one ad: the full description, itemised attributes
@@ -656,7 +678,7 @@ async def get_ad_images(ad_id: int, max_images: int = 4) -> list:
     return [f'{len(pictures)} image(s) for "{title}" (ad {ad_id}):', *pictures]
 
 
-@mcp.tool()
+@_tool
 @_tool_errors("seller")
 async def get_seller_info(seller_id: int) -> dict:
     """Who is selling: name, private vs commercial, member-since date, how
@@ -710,7 +732,7 @@ async def get_seller_info(seller_id: int) -> dict:
     return result
 
 
-@mcp.tool()
+@_tool
 @_tool_errors("location")
 async def search_locations(query: str) -> list[dict]:
     """Look up location ids for ``search_kleinanzeigen``'s ``location_id``,
@@ -741,7 +763,7 @@ async def search_locations(query: str) -> list[dict]:
     return out
 
 
-@mcp.tool()
+@_tool
 @_tool_errors("category filter")
 async def get_category_filters(category: Union[int, str]) -> list[dict]:
     """The attribute filters a category supports, for
@@ -774,7 +796,7 @@ async def get_category_filters(category: Union[int, str]) -> list[dict]:
     ]
 
 
-@mcp.tool()
+@_tool
 async def list_categories(query: Optional[str] = None, limit: int = 40) -> dict:
     """Browse the category tree to find the ``category`` that
     ``search_kleinanzeigen`` and ``get_category_filters`` take. Scoping a

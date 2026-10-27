@@ -89,7 +89,7 @@ async def test_location_and_filter_lookups(ka, call):
     berlin = await call("search_locations", query="berl")
     assert [loc["name"] for loc in berlin] == ["Berlin", "Pankow (Berlin)"]
     filters = await call("get_category_filters", category=225)
-    assert filters["key"] == "pc_zubehoer_software.art" and filters["multi_select"] is True
+    assert filters[0]["key"] == "pc_zubehoer_software.art" and filters[0]["multi_select"] is True
 
 
 async def test_category_list(call):
