@@ -1,7 +1,14 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["mcp>=2.3.0,<3", "httpx[http2]>=0.28.1"]
+# ///
 from mcp.server import MCPServer
+from mcp.server.caching import CacheHint
 from mcp.server.mcpserver import Image
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import ToolAnnotations
 import httpx
+import argparse
 import asyncio
 import functools
 import html
@@ -37,7 +44,9 @@ KA_BASIC_AUTH = "Basic YW5kcm9pZDpUYVI2MHBFdHRZ"
 _installation_id = f"{uuid.uuid4()}{int(time.time() * 1000)}"
 
 HOST = "127.0.0.1"
-PORT = 8000
+# geizhals-mcp serves on 8000 and willhaben-mcp on 8010, so all three can run
+# side by side
+PORT = 8020
 MCP_PATH = "/mcp"
 
 MAX_RETRIES = 2
@@ -69,7 +78,10 @@ whether anything is left. total is capped at 10000 by Kleinanzeigen.
 Fields without a value are left out of results.
 """
 
-mcp = MCPServer("kleinanzeigen-mcp", instructions=INSTRUCTIONS)
+# The tool list only changes with a new release, so clients on the 2026-07-28
+# protocol may keep it for a day instead of asking again on every connect.
+mcp = MCPServer("kleinanzeigen-mcp", instructions=INSTRUCTIONS,
+                cache_hints={"tools/list": CacheHint(ttl_ms=24 * 60 * 60 * 1000, scope="public")})
 client = httpx.AsyncClient(http2=True)
 
 logger = logging.getLogger(__name__)
@@ -113,7 +125,14 @@ def _prune(value):
     return value
 
 
-def _tool(fn):
+# Every tool only reads, so clients can run them without asking each time. All
+# but list_categories, which answers from the shipped tree, go out to
+# Kleinanzeigen.
+ONLINE = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
+LOCAL = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+
+
+def _tool(fn=None, *, annotations: ToolAnnotations = ONLINE):
     """Register `fn` as a tool whose result goes out as compact JSON with its
     null fields left out. Left to the SDK, a dict is pretty-printed with a
     two-space indent and a list becomes one text block per item.
@@ -121,17 +140,22 @@ def _tool(fn):
     structuredContent and add an output schema to the tool listing. The
     docstring is dedented here because only Python 3.13+ does that itself; on
     older ones every description line would carry four spaces of indent."""
+    if fn is None:
+        return functools.partial(_tool, annotations=annotations)
+
     @functools.wraps(fn)
     async def wrapper(*args, **kwargs):
         result = await fn(*args, **kwargs)
         return json.dumps(_prune(result), ensure_ascii=False, separators=(",", ":"))
-    return mcp.tool(description=inspect.cleandoc(fn.__doc__ or ""), structured_output=False)(wrapper)
+    return mcp.tool(description=inspect.cleandoc(fn.__doc__ or ""), annotations=annotations,
+                    structured_output=False)(wrapper)
 
 
 def _content_tool(fn):
     """Register `fn` as is, for a tool that returns content blocks rather than a
     dict; its docstring is dedented like ``_tool``'s."""
-    return mcp.tool(description=inspect.cleandoc(fn.__doc__ or ""), structured_output=False)(fn)
+    return mcp.tool(description=inspect.cleandoc(fn.__doc__ or ""), annotations=ONLINE,
+                    structured_output=False)(fn)
 
 
 def _tool_errors(what: str):
@@ -789,7 +813,7 @@ async def get_category_filters(category: Union[int, str]) -> list[dict]:
     ]
 
 
-@_tool
+@_tool(annotations=LOCAL)
 async def list_categories(query: Optional[str] = None, limit: int = 40) -> dict:
     """Find category ids for ``search_kleinanzeigen`` and
     ``get_category_filters``. Returns ``{count, categories: [{id, title,
@@ -809,6 +833,13 @@ async def list_categories(query: Optional[str] = None, limit: int = 40) -> dict:
 
 
 if __name__ == "__main__":
-    url = f"http://{HOST}:{PORT}{MCP_PATH}"
-    logger.info("Starting kleinanzeigen-mcp server on %s", url)
-    mcp.run("streamable-http", host=HOST, port=PORT, streamable_http_path=MCP_PATH)
+    parser = argparse.ArgumentParser(description="Kleinanzeigen MCP server")
+    parser.add_argument("--stdio", action="store_true",
+                        help="speak MCP over stdin/stdout instead of serving HTTP")
+    if parser.parse_args().stdio:
+        # stdout carries the protocol; the log already goes to stderr
+        mcp.run("stdio")
+    else:
+        url = f"http://{HOST}:{PORT}{MCP_PATH}"
+        logger.info("Starting kleinanzeigen-mcp server on %s", url)
+        mcp.run("streamable-http", host=HOST, port=PORT, streamable_http_path=MCP_PATH)

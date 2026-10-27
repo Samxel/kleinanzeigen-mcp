@@ -89,7 +89,7 @@ python main.py
 The server starts over streamable HTTP and prints where it's listening:
 
 ```
-Starting kleinanzeigen-mcp server on http://127.0.0.1:8000/mcp
+Starting kleinanzeigen-mcp server on http://127.0.0.1:8020/mcp
 ```
 
 Point your MCP client at that URL. Host, port and path live at the top of
@@ -105,7 +105,7 @@ on startup.
 One command, no config file:
 
 ```bash
-claude mcp add --transport http kleinanzeigen http://127.0.0.1:8000/mcp
+claude mcp add --transport http kleinanzeigen http://127.0.0.1:8020/mcp
 ```
 
 Add `--scope user` to have it in every project instead of only the current one.
@@ -121,7 +121,7 @@ Same URL, in the client's MCP config:
   "mcpServers": {
     "kleinanzeigen": {
       "type": "http",
-      "url": "http://127.0.0.1:8000/mcp"
+      "url": "http://127.0.0.1:8020/mcp"
     }
   }
 }
@@ -143,14 +143,14 @@ restart Claude Desktop:
   "mcpServers": {
     "kleinanzeigen": {
       "command": "cmd",
-      "args": ["/c", "npx", "-y", "mcp-remote", "http://127.0.0.1:8000/mcp"]
+      "args": ["/c", "npx", "-y", "mcp-remote", "http://127.0.0.1:8020/mcp"]
     }
   }
 }
 ```
 
 On macOS/Linux drop the Windows wrapper: `"command": "npx"` with
-`"args": ["-y", "mcp-remote", "http://127.0.0.1:8000/mcp"]`.
+`"args": ["-y", "mcp-remote", "http://127.0.0.1:8020/mcp"]`.
 
 **Or expose the server** (cloudflared, ngrok, or run it on a box with a public
 hostname) and add that HTTPS URL under **Settings > Connectors > Add custom
