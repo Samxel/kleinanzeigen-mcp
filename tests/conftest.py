@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import main  # noqa: E402
 from mcp import Client  # noqa: E402
+from kleinanzeigen import api  # noqa: E402
 
 
 @pytest.fixture
@@ -48,12 +49,12 @@ class FakeKleinanzeigen:
 @pytest.fixture
 def ka(monkeypatch):
     fake = FakeKleinanzeigen()
-    monkeypatch.setattr(main, "client", httpx.AsyncClient(transport=httpx.MockTransport(fake.handle)))
+    monkeypatch.setattr(api, "client", httpx.AsyncClient(transport=httpx.MockTransport(fake.handle)))
 
     async def no_sleep(_):
         pass
 
-    monkeypatch.setattr(main.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(api.asyncio, "sleep", no_sleep)
     return fake
 
 

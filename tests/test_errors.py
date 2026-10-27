@@ -1,5 +1,8 @@
 """Failures reach the model as is_error results that say what went wrong."""
 
+import re
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -8,6 +11,7 @@ from conftest import ToolFailed
 pytestmark = pytest.mark.anyio
 
 API = "api.kleinanzeigen.de"
+ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.mark.parametrize("tool, args, message", [
@@ -39,3 +43,11 @@ async def test_a_seller_with_both_halves_failing_is_an_error(ka, call):
     ka.on("gateway.kleinanzeigen.de", "/", httpx.Response(500))
     with pytest.raises(ToolFailed, match="profile: .*blocked this IP range.*; reputation: "):
         await call("get_seller_info", seller_id=1)
+
+
+async def test_a_refused_credential_names_the_file_that_holds_it(ka, call):
+    ka.on(API, "/api/ads/1.json", httpx.Response(401))
+    with pytest.raises(ToolFailed, match="client credential") as failed:
+        await call("get_ad_detail", ad_id=1)
+    path = re.search(r"credential in (\S+) \(KA_BASIC_AUTH\)", str(failed.value)).group(1)
+    assert "KA_BASIC_AUTH = " in (ROOT / path).read_text()

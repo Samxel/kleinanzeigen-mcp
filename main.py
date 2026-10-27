@@ -2,55 +2,29 @@
 # requires-python = ">=3.10"
 # dependencies = ["mcp>=2.3.0,<3", "httpx[http2]>=0.28.1"]
 # ///
-from mcp.server import MCPServer
-from mcp.server.caching import CacheHint
-from mcp.server.mcpserver import Image
-from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import ToolAnnotations
-import httpx
 import argparse
 import asyncio
 import functools
 import html
 import inspect
 import json
-import re
-import unicodedata
-import uuid
-import time
-from pathlib import Path
-from typing import Optional, Union, Literal
 import logging
+from typing import Optional, Union
 
-BASE_URL = "https://api.kleinanzeigen.de/api"
-GATEWAY_URL = "https://gateway.kleinanzeigen.de"
+import httpx
+from mcp.server import MCPServer
+from mcp.server.caching import CacheHint
+from mcp.server.mcpserver import Image
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import ToolAnnotations
 
-KA_CLIENT = "Kleinanzeigen/2026.37.1 (Android 14; google sdk_gphone64_x86_64)"
-KA_ECG_USER_AGENT = "ebayk-android-app-2026.37.1"
-KA_ECG_USER_VERSION = "2026.37.1"
-
-# --- Request authentication ------------------------------------------------
-# Every request carries a static HTTP Basic credential baked into the app
-# (reverse-engineered from the APK, not user-specific). Decodes to
-# "android:TaR60pEttY".
-KA_BASIC_AUTH = "Basic YW5kcm9pZDpUYVI2MHBFdHRZ"
-
-# `x-ebayk-app` identifies the app installation: a UUIDv4 immediately followed
-# by the epoch-millis timestamp of when it was generated, no separator (e.g.
-# "7243bedb-2427-4f72-bf89-567ecb1c74661789285561410"). Captured traffic shows
-# a fresh, never-before-seen value accepted immediately with no separate
-# registration call, so it looks like a free-form client-generated id the
-# server does not validate -- generated once per process and reused here.
-_installation_id = f"{uuid.uuid4()}{int(time.time() * 1000)}"
+from kleinanzeigen import api, categories, matching, summaries
 
 HOST = "127.0.0.1"
 # geizhals-mcp serves on 8000 and willhaben-mcp on 8010, so all three can run
 # side by side
 PORT = 8020
 MCP_PATH = "/mcp"
-
-MAX_RETRIES = 2
-RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 MAX_ROWS = 30
 # How deep a client-side filter (title_only/require/exclude) may page before
@@ -82,38 +56,10 @@ Fields without a value are left out of results.
 # protocol may keep it for a day instead of asking again on every connect.
 mcp = MCPServer("kleinanzeigen-mcp", instructions=INSTRUCTIONS,
                 cache_hints={"tools/list": CacheHint(ttl_ms=24 * 60 * 60 * 1000, scope="public")})
-client = httpx.AsyncClient(http2=True)
+
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
-
-# Confirmed against the server's own ads-search-options schema
-# (api/ads/search-metadata/{categoryId}.json) rather than guessed.
-Sort = Literal["RECOMMENDED", "DATE_DESCENDING", "PRICE_ASCENDING", "PRICE_DESCENDING", "DISTANCE_ASCENDING"]
-AdType = Literal["OFFERED", "WANTED"]
-PosterType = Literal["PRIVATE", "COMMERCIAL"]
-
-
-def _upstream_message(status: int, what: str, body: str = "") -> str:
-    """Phrase an HTTP failure in terms the caller can act on, without the
-    internal url and MDN link httpx puts in its own message."""
-    if status == 404:
-        return f"no {what} found -- wrong id, or the ad has been taken down"
-    if status == 400:
-        return f"Kleinanzeigen rejected the {what} request (400); check the arguments you passed"
-    if status in (401, 403):
-        # a blocked IP range and a stale credential both come back as 403, but
-        # only the block says so in the body -- they need opposite fixes
-        if "gesperrt" in body or "blocked" in body.lower():
-            return (f"Kleinanzeigen blocked this IP range on the {what} request ({status}). Their "
-                    f"anti-fraud rejects whole ranges (VPN and datacenter IPs in particular), so "
-                    f"this usually needs a different connection, not a retry. Search and ad "
-                    f"lookups are unaffected -- only the seller profile enforces it.")
-        return (f"Kleinanzeigen refused the {what} request ({status}) -- the client credential "
-                f"in main.py (KA_BASIC_AUTH) may be outdated")
-    if status == 429:
-        return f"Kleinanzeigen rate-limited the {what} request (429) -- slow down and retry later"
-    return f"Kleinanzeigen failed on the {what} request (HTTP {status})"
 
 
 def _prune(value):
@@ -158,25 +104,6 @@ def _content_tool(fn):
                     structured_output=False)(fn)
 
 
-def _tool_errors(what: str):
-    """Turn upstream failures into a ``ToolError`` the model can read, rather
-    than a raw httpx error; any exception that is not a ``ToolError`` would only
-    reach it as "Error executing tool". ``what`` names the thing being fetched,
-    for the message."""
-    def decorator(fn):
-        @functools.wraps(fn)
-        async def wrapper(*args, **kwargs):
-            try:
-                return await fn(*args, **kwargs)
-            except httpx.HTTPStatusError as exc:
-                raise ToolError(_upstream_message(exc.response.status_code, what, exc.response.text)) from exc
-            except httpx.HTTPError as exc:
-                raise ToolError(f"could not reach Kleinanzeigen for the {what} request "
-                                f"({type(exc).__name__})") from exc
-        return wrapper
-    return decorator
-
-
 def _rows(rows: int, page: int = 0) -> int:
     """Validate a page size rather than quietly clamping 0 up to 1, and a page
     index, which Kleinanzeigen would answer for -1 as if it were 0."""
@@ -212,69 +139,6 @@ def _pagination(total, page: int, seen: int, returned: int) -> dict:
     }
 
 
-def _auth_headers(*, user_token: str = "") -> dict:
-    """Headers the app sends on every api.kleinanzeigen.de / gateway.kleinanzeigen.de
-    call. `user_token` is left empty when not logged in."""
-    return {
-        "authorization": KA_BASIC_AUTH,
-        "x-ebayk-app": _installation_id,
-        "x-ebayk-userid-token": user_token,
-        "user-agent": KA_CLIENT,
-        "x-ecg-user-agent": KA_ECG_USER_AGENT,
-        "x-ecg-user-version": KA_ECG_USER_VERSION,
-        "accept-encoding": "gzip",
-    }
-
-
-async def _get(endpoint: str, params: Optional[dict] = None) -> dict:
-    """GET an api.kleinanzeigen.de endpoint. See `_request`."""
-    return await _request(f"{BASE_URL}/{endpoint}", params)
-
-
-async def _get_gateway(endpoint: str, params: Optional[dict] = None) -> dict:
-    """GET a gateway.kleinanzeigen.de endpoint (newer services: seller
-    reputation, homepage feed, ...). See `_request`."""
-    return await _request(f"{GATEWAY_URL}/{endpoint}", params)
-
-
-async def _request(url: str, params: Optional[dict] = None) -> dict:
-    """GET a kleinanzeigen.de URL, retrying transient failures (timeouts,
-    429, 5xx) with exponential backoff. Other 4xx errors fail immediately."""
-    headers = _auth_headers()
-    for attempt in range(MAX_RETRIES + 1):
-        try:
-            response = await client.get(url, params=params, headers=headers)
-        except httpx.TransportError:
-            if attempt == MAX_RETRIES:
-                raise
-        else:
-            if response.status_code not in RETRYABLE_STATUS or attempt == MAX_RETRIES:
-                response.raise_for_status()
-                return response.json()
-        delay = 0.5 * (2 ** attempt)
-        logger.warning("Request to '%s' failed (attempt %d/%d), retrying in %.1fs",
-                        url, attempt + 1, MAX_RETRIES + 1, delay)
-        await asyncio.sleep(delay)
-
-
-# ---------------------------------------------------------------------------
-# JAXB unwrapping
-# ---------------------------------------------------------------------------
-# Kleinanzeigen's JSON is JAXB-serialized XML (com.ebay.ecg.api.spec...), so
-# scalar fields don't come as plain values -- they're wrapped as {"value": ...},
-# and top-level collections are keyed by their XML namespace URI. `_v` unwraps
-# the former; `_ns` picks out the latter regardless of the exact namespace string.
-def _v(node, default=None):
-    return node.get("value", default) if isinstance(node, dict) else default
-
-
-def _ns(container: dict, local_name: str) -> dict:
-    for key, val in container.items():
-        if key.endswith(f"}}{local_name}") or key == local_name:
-            return _v(val, {})
-    return {}
-
-
 _CONTENT_TYPE_FORMAT = {
     "image/webp": "webp",
     "image/jpeg": "jpeg",
@@ -284,266 +148,8 @@ _CONTENT_TYPE_FORMAT = {
 }
 
 
-def _image_urls(pictures: dict) -> list[str]:
-    urls = []
-    for pic in (pictures or {}).get("picture", []):
-        for link in pic.get("link", []):
-            if link.get("rel") == "large":
-                urls.append(link["href"])
-                break
-    return urls
-
-
-# ---------------------------------------------------------------------------
-# Categories (shipped tree, built by scripts/build_categories.py)
-# ---------------------------------------------------------------------------
-def _fold(s: str) -> str:
-    """Lowercase and strip accents, so "Grün" and "gruen" compare equal."""
-    return unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode().lower()
-
-
-def _norm(s: str) -> str:
-    """Normalise a label for lookup: lowercase, strip accents, drop all spaces."""
-    return "".join(_fold(s).split())
-
-
-def _load_categories() -> list[dict]:
-    path = Path(__file__).parent / "data" / "categories.json"
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        logging.getLogger(__name__).warning("categories.json not found -- list_categories disabled")
-        return []
-
-
-_CATEGORIES = _load_categories()
-
-
-def _walk_categories(nodes, trail, out):
-    for nd in nodes:
-        label = nd.get("title") or ""
-        path = trail + [label]
-        out.append((nd, " / ".join(path)))
-        _walk_categories(nd.get("childs", []), path, out)
-
-
-# ---------------------------------------------------------------------------
-# Text matching (client-side title/require/exclude filters)
-# ---------------------------------------------------------------------------
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
-# Ads fuse series and model number ("RTX4070"); split those so a keyword written
-# with a space still matches, and the other way round.
-_FUSED_RE = re.compile(r"^([a-z]{2,4})(\d{3,5})$")
-# A number and its unit: sellers write the same storage size as "128GB",
-# "128 GB", "128gb" or "256Gb", so a term given in one of those has to match all.
-_NUM_UNIT_RE = re.compile(r"^(\d+)\s*([a-z]+)$")
-
-
-def _tokens(text: str) -> set:
-    """Comparable word tokens of a title or keyword. Fused model codes are
-    replaced by their parts on both sides, so "RTX4070" and "RTX 4070" match
-    each other whichever one the keyword uses."""
-    out = set()
-    for token in _TOKEN_RE.findall(_fold(text or "")):
-        fused = _FUSED_RE.match(token)
-        out.update(fused.groups() if fused else [token])
-    return out
-
-
-def _term_forms(term: str) -> list[set]:
-    """The token sets a filter term may appear as. Everything is one form,
-    except a number with a unit, which is also accepted split in two -- that way
-    a term matches whichever way the seller spelled it."""
-    folded = _fold(term).strip()
-    match = _NUM_UNIT_RE.match(folded)
-    if not match:
-        return [_tokens(folded)]
-    number, unit = match.groups()
-    return [{f"{number}{unit}"}, {number, unit}]
-
-
-def _has_term(tokens: set, forms: list[set]) -> bool:
-    """Whether a title (or ad text) carries a filter term. A word matches in
-    full, or as the tail of a German compound ("kabel" catches "Ladekabel"), but
-    never one that merely starts with it -- otherwise "pro" would throw away
-    every "Prozessor" and be useless for separating an iPhone 13 from a 13 Pro."""
-    return any(all(any(token == word or token.endswith(word) for token in tokens)
-                   for word in form)
-               for form in forms)
-
-
-def _resolve_category(category: Union[int, str]) -> int:
-    """Resolve a category given as id or name to its numeric id, so the caller
-    can pass "PC-Zubehör & Software" instead of looking up 225 first."""
-    text = str(category).strip()
-    if text.isdigit():
-        return int(text)
-    flat: list = []
-    _walk_categories(_CATEGORIES, [], flat)
-    wanted = _norm(text)
-
-    exact = [(n, p) for n, p in flat if _norm(n.get("title") or "") == wanted]
-    if exact:
-        # a name can repeat deeper in the tree ("Elektronik" is also a
-        # Dienstleistungen child); the shallower one is what was meant
-        depth = min(p.count("/") for _, p in exact)
-        top = [(n, p) for n, p in exact if p.count("/") == depth]
-        if len(top) == 1:
-            return top[0][0]["id"]
-        paths = ", ".join(p for _, p in top)
-        raise ToolError(f"Category name {text!r} is ambiguous ({paths}). Pass the id instead.")
-
-    partial = [(n, p) for n, p in flat if wanted in _norm(p)]
-    if not partial:
-        # words in any order, and the tree's word with or without an ending
-        # ("Handys" finds "Handy & Telefon", "Software PC-Zubehör" the reverse)
-        words = _category_words(text)
-        partial = [(n, p) for n, p in flat if _word_overlap(words, _tokens(p)) == len(words)]
-    if len(partial) == 1:
-        return partial[0][0]["id"]
-    if partial:
-        matches = ", ".join(f"{n['id']} ({p})" for n, p in partial[:8])
-        raise ToolError(f"Category {text!r} is ambiguous. Closest matches: {matches}. Pass the id instead.")
-    raise ToolError(f"Unknown category {text!r}.{_closest_categories(text, flat)} Use list_categories "
-                    f"to find one -- and note the tree stops fairly high up, so a finer cut like "
-                    f"'Grafikkarten' is an attribute value (get_category_filters), not a category.")
-
-
-# What a model reaches for first, in the tree's own words
-_CATEGORY_ALIASES = {"smartphone": "handy", "smartphones": "handy", "fernseher": "tv"}
-
-
-def _category_words(text: str) -> set:
-    return {_CATEGORY_ALIASES.get(word, word) for word in _tokens(text)}
-
-
-def _word_overlap(wanted: set, words: set, *, max_ending: int = 3) -> int:
-    """How many of the wanted words a category's words cover. A word counts
-    when it is the same, or when one is the other plus an ending of up to
-    `max_ending` letters ("handys" and "handy", "fahrrader" and "fahrrad"); that
-    needs four letters, so "pc" does not cover "pcs"."""
-    def covers(want: str) -> bool:
-        return any(want == word or (min(len(want), len(word)) >= 4
-                                    and abs(len(want) - len(word)) <= max_ending
-                                    and (want.startswith(word) or word.startswith(want)))
-                   for word in words)
-    return sum(covers(want) for want in wanted)
-
-
-def _closest_categories(text: str, flat: list, limit: int = 5) -> str:
-    """" Closest: <id> (<path>), ..." for the categories sharing the most words
-    with `text`, or "" when none shares any. A compound counts here too, so
-    "Gartenmöbel" points at "Haus & Garten"."""
-    words = _category_words(text)
-    scored = sorted(((_word_overlap(words, _tokens(p), max_ending=99), len(p), n["id"], p) for n, p in flat),
-                    key=lambda row: (-row[0], row[1]))
-    best = [f"{cid} ({path})" for score, _, cid, path in scored[:limit] if score]
-    return f" Closest: {', '.join(best)}." if best else ""
-
-
-def _clean_description(value: Optional[str]) -> str:
-    """Ad descriptions come as HTML (``<br />`` line breaks, entities);
-    render them as plain, readable text."""
-    text = re.sub(r"<br\s*/?>", "\n", value or "", flags=re.IGNORECASE)
-    text = re.sub(r"<[^>]+>", "", text)
-    return html.unescape(text).strip()
-
-
-def _ad_url(ad_id) -> Optional[str]:
-    """The ad's web page. The site finds an ad by its id alone, so the title
-    slug and category in the link the API returns are only extra tokens."""
-    return f"https://www.kleinanzeigen.de/s-anzeige/{ad_id}" if ad_id else None
-
-
-def _price(ad: dict) -> dict:
-    """The price fields worth sending: the currency only when it is not EUR,
-    and the price type only when it says more than "this is the price" (VB,
-    zu verschenken, ...)."""
-    price = ad.get("price") or {}
-    currency = _v(_v(price.get("currency-iso-code")))
-    price_type = _v(price.get("price-type"))
-    return {
-        "price_amount": _v(price.get("amount")),
-        "price_currency": currency if currency != "EUR" else None,
-        "price_type": price_type if price_type != "SPECIFIED_AMOUNT" else None,
-    }
-
-
-def _shipping(ad: dict) -> list[str]:
-    return [o["id"] for o in (ad.get("shipping-options") or {}).get("shipping-option", [])]
-
-
-def _summarize_ad_hit(ad: dict) -> dict:
-    address = ad.get("ad-address") or {}
-    features = (ad.get("features-active") or {}).get("feature-active", [])
-    return {
-        "id": ad.get("id"),
-        "title": html.unescape(_v(ad.get("title")) or ""),
-        "description": _clean_description(_v(ad.get("description"))),
-        **_price(ad),
-        "location": _v(address.get("state")),
-        "zip_code": _v(address.get("zip-code")),
-        "ships": bool(_shipping(ad)),
-        "category_id": (ad.get("category") or {}).get("id"),
-        "seller_id": _v(ad.get("user-id")),
-        "store_title": _v(ad.get("store-title")),
-        "seller_account_type": _v(ad.get("seller-account-type")),
-        "is_top_ad": any(f.get("name") == "TOPAD" for f in features) or None,
-        "start_date": (_v(ad.get("start-date-time")) or "")[:16] or None,
-        # the photos themselves are in get_ad_images
-        "image_count": len((ad.get("pictures") or {}).get("picture", [])),
-        "url": _ad_url(ad.get("id")),
-    }
-
-
-def _summarize_attributes(attributes: dict) -> dict:
-    """Flatten an ad's `attributes.attribute[]` list into {label: value}, e.g.
-    {"Zustand": "Neu"}. The labels are what the ad page shows; the filter keys
-    behind them ("pc_zubehoer_software.condition") come from
-    get_category_filters."""
-    out = {}
-    for attr in (attributes or {}).get("attribute", []):
-        values = attr.get("value") or []
-        label = ", ".join(v.get("localized-label", v.get("value", "")) for v in values)
-        out[attr.get("localized-label") or attr.get("name")] = label
-    return out
-
-
-def _summarize_ad_detail(ad: dict) -> dict:
-    address = ad.get("ad-address") or {}
-    category = ad.get("category") or {}
-    ad_type = _v(ad.get("ad-type"))
-    status = _v(ad.get("ad-status"))
-    return {
-        "id": ad.get("id"),
-        "title": html.unescape(_v(ad.get("title")) or ""),
-        "description": _clean_description(_v(ad.get("description"))),
-        # only the unusual cases: a wanted ad, or one no longer active
-        "ad_type": ad_type if ad_type != "OFFERED" else None,
-        "ad_status": status if status != "ACTIVE" else None,
-        **_price(ad),
-        "location": _v(address.get("state")),
-        "zip_code": _v(address.get("zip-code")),
-        "category_id": category.get("id"),
-        "category_name": _v(category.get("localized-name")),
-        "seller_id": _v(ad.get("user-id")),
-        "seller_name": _v(ad.get("contact-name")),
-        "seller_account_type": _v(ad.get("seller-account-type")),
-        "seller_rating": _v((ad.get("user-rating") or {}).get("averageRating")),
-        "attributes": _summarize_attributes(ad.get("attributes")),
-        "shipping_options": _shipping(ad),
-        "buy_now": (ad.get("buy-now") or {}).get("selected") == "true" or None,
-        "start_date": (_v(ad.get("start-date-time")) or "")[:16] or None,
-        "image_count": len(_image_urls(ad.get("pictures"))),
-        "url": _ad_url(ad.get("id")),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Tools
-# ---------------------------------------------------------------------------
 @_tool
-@_tool_errors("search")
+@api.tool_errors("search")
 async def search_kleinanzeigen(
     query: Optional[str] = None,
     *,
@@ -555,9 +161,9 @@ async def search_kleinanzeigen(
     min_price: Optional[float] = None,
     max_price: Optional[float] = None,
     price_currency: str = "EUR",
-    ad_type: Optional[AdType] = None,
-    poster_type: Optional[PosterType] = None,
-    sort: Sort = "RECOMMENDED",
+    ad_type: Optional[api.AdType] = None,
+    poster_type: Optional[api.PosterType] = None,
+    sort: api.Sort = "RECOMMENDED",
     title_only: bool = False,
     require: Optional[list[str]] = None,
     exclude: Optional[list[str]] = None,
@@ -617,9 +223,9 @@ async def search_kleinanzeigen(
     _check_range("price", min_price, max_price)
     rows = _rows(rows, page)
 
-    wanted = _tokens(query) if (title_only and query) else set()
-    required = [_term_forms(t) for t in (require or []) if str(t).strip()]
-    excluded = [_term_forms(t) for t in (exclude or []) if str(t).strip()]
+    wanted = matching.tokens(query) if (title_only and query) else set()
+    required = [matching.term_forms(t) for t in (require or []) if str(t).strip()]
+    excluded = [matching.term_forms(t) for t in (exclude or []) if str(t).strip()]
     post_filtered = bool(wanted or required or excluded)
 
     params: list[tuple[str, str]] = [
@@ -633,7 +239,7 @@ async def search_kleinanzeigen(
     if query:
         params.append(("q", query))
     if category is not None:
-        params.append(("categoryId", str(_resolve_category(category))))
+        params.append(("categoryId", str(categories.resolve(category))))
     if location_id is not None:
         params.append(("locationId", str(location_id)))
     if zip_code is not None:
@@ -656,16 +262,16 @@ async def search_kleinanzeigen(
         params.append((f"attr[{key}]", joined))
 
     def keep(hit: dict) -> bool:
-        tokens = _tokens(hit["title"])
+        tokens = matching.tokens(hit["title"])
         if wanted and not wanted <= tokens:
             return False
-        if any(_has_term(tokens, forms) for forms in excluded):
+        if any(matching.has_term(tokens, forms) for forms in excluded):
             return False
         if required:
             # a spec is written wherever the seller felt like it, so look at the
             # whole ad rather than demanding it in the title
-            text = tokens | _tokens(hit["description"])
-            if not all(_has_term(text, forms) for forms in required):
+            text = tokens | matching.tokens(hit["description"])
+            if not all(matching.has_term(text, forms) for forms in required):
                 return False
         return True
 
@@ -676,12 +282,12 @@ async def search_kleinanzeigen(
     cursor, total, scanned = page, None, 0
     while True:
         page_params = params + [("page", str(cursor)), ("size", str(page_size))]
-        payload = _ns(await _get("ads.json", params=page_params), "ads")
+        payload = api.collection(await api.get("ads.json", params=page_params), "ads")
         ads = payload.get("ad", [])
         total = (payload.get("paging") or {}).get("numFound", total)
         for ad in ads:
             scanned += 1
-            hit = _summarize_ad_hit(ad)
+            hit = summaries.summarize_ad_hit(ad)
             if keep(hit):
                 results.append(hit)
                 if len(results) >= rows:
@@ -698,7 +304,7 @@ async def search_kleinanzeigen(
 
 
 @_tool
-@_tool_errors("ad")
+@api.tool_errors("ad")
 async def get_ad_detail(ad_id: int) -> dict:
     """One ad in full: the complete description, attributes by their
     label ("Zustand", "Versand", ...), category, location, shipping options,
@@ -707,12 +313,12 @@ async def get_ad_detail(ad_id: int) -> dict:
     Args:
         ad_id: The ad id from a search.
     """
-    data = await _get(f"ads/{ad_id}.json")
-    return _summarize_ad_detail(_ns(data, "ad"))
+    data = await api.get(f"ads/{ad_id}.json")
+    return summaries.summarize_ad_detail(api.collection(data, "ad"))
 
 
 @_content_tool
-@_tool_errors("ad")
+@api.tool_errors("ad")
 async def get_ad_images(ad_id: int, max_images: int = 4) -> list:
     """The ad's photos as images you can look at, up to
     ``max_images`` (at most 10). Use them whenever the answer depends on what
@@ -724,16 +330,16 @@ async def get_ad_images(ad_id: int, max_images: int = 4) -> list:
         max_images: How many photos to fetch. Default 4.
     """
     max_images = max(1, min(int(max_images), 10))
-    data = await _get(f"ads/{ad_id}.json")
+    data = await api.get(f"ads/{ad_id}.json")
 
-    ad = _ns(data, "ad")
-    urls = _image_urls(ad.get("pictures"))[:max_images]
+    ad = api.collection(data, "ad")
+    urls = summaries.image_urls(ad.get("pictures"))[:max_images]
     if not urls:
         return [f"No images found for ad {ad_id}."]
 
     async def fetch(url: str):
         try:
-            response = await client.get(url, headers={"user-agent": KA_CLIENT})
+            response = await api.client.get(url, headers={"user-agent": api.KA_CLIENT})
             response.raise_for_status()
             ctype = response.headers.get("content-type", "").split(";")[0].strip().lower()
             return Image(data=response.content, format=_CONTENT_TYPE_FORMAT.get(ctype, "jpeg"))
@@ -743,12 +349,12 @@ async def get_ad_images(ad_id: int, max_images: int = 4) -> list:
 
     fetched = await asyncio.gather(*(fetch(u) for u in urls))
     pictures = [img for img in fetched if img is not None]
-    title = html.unescape(_v(ad.get("title")) or "") or f"ad {ad_id}"
+    title = html.unescape(api.unwrap(ad.get("title")) or "") or f"ad {ad_id}"
     return [f'{len(pictures)} image(s) for "{title}" (ad {ad_id}):', *pictures]
 
 
 @_tool
-@_tool_errors("seller")
+@api.tool_errors("seller")
 async def get_seller_info(seller_id: int) -> dict:
     """Who sells an ad: name, private or commercial, member
     since, ads run, followers, reply speed and reputation score. For a trust
@@ -767,14 +373,14 @@ async def get_seller_info(seller_id: int) -> dict:
         try:
             return await coro, None
         except httpx.HTTPStatusError as exc:
-            return {}, f"{name}: {_upstream_message(exc.response.status_code, name, exc.response.text)}"
+            return {}, f"{name}: {api.upstream_message(exc.response.status_code, name, exc.response.text)}"
         except httpx.HTTPError as exc:
             return {}, f"{name}: could not reach Kleinanzeigen ({type(exc).__name__})"
 
     profile, profile_error = await half(
-        _get(f"users/public/{seller_id}/profile.json"), "profile")
+        api.get(f"users/public/{seller_id}/profile.json"), "profile")
     reputation, reputation_error = await half(
-        _get_gateway(f"user-reputation-service/public/users/{seller_id}/reputation-summary"),
+        api.get_gateway(f"user-reputation-service/public/users/{seller_id}/reputation-summary"),
         "reputation")
     if profile_error and reputation_error:
         raise ToolError(f"{profile_error}; {reputation_error}")
@@ -799,7 +405,7 @@ async def get_seller_info(seller_id: int) -> dict:
 
 
 @_tool
-@_tool_errors("location")
+@api.tool_errors("location")
 async def search_locations(query: str) -> list[dict]:
     """Find location ids for the ``location_id`` filter of
     ``search_kleinanzeigen`` by name prefix: states, cities and districts. For
@@ -808,23 +414,23 @@ async def search_locations(query: str) -> list[dict]:
     Args:
         query: Start of the name, e.g. "berl".
     """
-    data = await _get("locations.json", params={"depth": 1, "q": query})
-    payload = _ns(data, "locations")
+    data = await api.get("locations.json", params={"depth": 1, "q": query})
+    payload = api.collection(data, "locations")
     locations = payload.get("location", [])
     out = []
     for loc in locations:
         regions = (loc.get("regions") or {}).get("region") or []
         out.append({
             "id": loc.get("id"),
-            "name": _v(loc.get("localized-name")),
-            "region": _v(regions[0].get("localized-name")) if regions else None,
-            "radius_km": _v(loc.get("radius")),
+            "name": api.unwrap(loc.get("localized-name")),
+            "region": api.unwrap(regions[0].get("localized-name")) if regions else None,
+            "radius_km": api.unwrap(loc.get("radius")),
         })
     return out
 
 
 @_tool
-@_tool_errors("category filter")
+@api.tool_errors("category filter")
 async def get_category_filters(category: Union[int, str]) -> list[dict]:
     """The attribute filters of a category, for the
     ``attributes`` of ``search_kleinanzeigen``: ``[{key, label, type,
@@ -834,8 +440,8 @@ async def get_category_filters(category: Union[int, str]) -> list[dict]:
     Args:
         category: Category id or name.
     """
-    data = await _get(f"ads/search-metadata/{_resolve_category(category)}.json")
-    payload = _ns(data, "ads-search-options")
+    data = await api.get(f"ads/search-metadata/{categories.resolve(category)}.json")
+    payload = api.collection(data, "ads-search-options")
     attributes = (payload.get("attributes") or {}).get("attribute", [])
     return [
         {
@@ -862,10 +468,10 @@ async def list_categories(query: Optional[str] = None, limit: int = 40) -> dict:
         limit: Default 40.
     """
     flat: list = []
-    _walk_categories(_CATEGORIES, [], flat)
-    q = _norm(query) if query else None
+    categories.walk(categories.CATEGORIES, [], flat)
+    q = matching.norm(query) if query else None
     rows = [{"id": node.get("id"), "title": node.get("title"), "path": path}
-            for node, path in flat if not q or q in _norm(path)]
+            for node, path in flat if not q or q in matching.norm(path)]
     return {"count": len(rows), "categories": rows[:limit]}
 
 

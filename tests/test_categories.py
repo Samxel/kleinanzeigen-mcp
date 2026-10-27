@@ -2,7 +2,7 @@
 
 import pytest
 
-import main
+from kleinanzeigen import api, categories
 from conftest import ToolFailed
 
 pytestmark = pytest.mark.anyio
@@ -16,12 +16,12 @@ pytestmark = pytest.mark.anyio
     ("Fahrräder", 217),
 ])
 def test_a_name_as_a_model_writes_it_resolves(name, category):
-    assert main._resolve_category(name) == category
+    assert categories.resolve(name) == category
 
 
 def test_a_compound_is_no_ending():
-    with pytest.raises(main.ToolError, match=r"Unknown category 'Gartenmöbel'. Closest: 80 \(Haus & Garten\)"):
-        main._resolve_category("Gartenmöbel")
+    with pytest.raises(api.ToolError, match=r"Unknown category 'Gartenmöbel'. Closest: 80 \(Haus & Garten\)"):
+        categories.resolve("Gartenmöbel")
 
 
 async def test_an_ambiguous_name_lists_ids(call):
