@@ -95,3 +95,10 @@ async def test_location_and_filter_lookups(ka, call):
 async def test_category_list(call):
     result = await call("list_categories", query="pc-zubehör")
     assert [c["id"] for c in result["categories"]] == [225]
+
+
+async def test_paid_top_ads_stay_out_unless_asked_for(ka, call):
+    ka.on(API, SEARCH, search([]))
+    await call("search_kleinanzeigen", query="iPhone 13")
+    await call("search_kleinanzeigen", query="iPhone 13", include_top_ads=True)
+    assert [r.url.params["includeTopAds"] for r in ka.sent(SEARCH)] == ["false", "true"]

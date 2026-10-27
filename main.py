@@ -437,7 +437,7 @@ async def search_kleinanzeigen(
     picture_required: bool = False,
     buy_now_only: bool = False,
     shippable: bool = False,
-    include_top_ads: bool = True,
+    include_top_ads: bool = False,
 ) -> dict:
     """Search Kleinanzeigen listings. At least one of ``query`` or ``category``
     is required.
@@ -473,9 +473,9 @@ async def search_kleinanzeigen(
     ``get_ad_images`` the pictures themselves. ``total`` is capped at 10000 by
     Kleinanzeigen, so that value means "at least", not a real count.
 
-    Ads with ``is_top_ad`` are paid placements pinned above the sort order --
-    when you sort by price, set ``include_top_ads=False`` or the first rows
-    won't be the cheapest. A ``price_amount`` of ``null`` is normal: it means
+    Paid "TOP" placements are left out by default: they are pinned above the
+    sort order whatever the query, and are mostly repair shops and buyers
+    ("Ankauf") rather than the item. A ``price_amount`` of ``null`` is normal: it means
     "zu verschenken" or "VB" (see ``price_type``), and those sort first
     ascending.
 
@@ -504,8 +504,8 @@ async def search_kleinanzeigen(
         picture_required: Only ads that have at least one picture.
         buy_now_only: Only ads with "Direkt kaufen" enabled.
         shippable: Only ads that offer shipping.
-        include_top_ads: Keep paid "TOP" placements in the results. Default
-            True (what the app does); set False for an honest price ranking.
+        include_top_ads: Also return paid "TOP" placements (``is_top_ad``), as
+            the app does. Default False, which keeps the ranking honest.
     """
     if not query and category is None:
         raise ToolError("Provide 'query' and/or 'category'.")
