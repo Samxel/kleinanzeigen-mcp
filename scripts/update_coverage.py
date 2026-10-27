@@ -38,8 +38,12 @@ def fetch_counts() -> dict[str, int]:
         body = response.read()
     if body[:2] == b"\x1f\x8b":
         body = gzip.decompress(body)
-    page = body.decode("utf-8", "replace")
+    return parse_counts(body.decode("utf-8", "replace"))
 
+
+def parse_counts(page: str) -> dict[str, int]:
+    """The headline numbers out of the "Über uns" page's
+    ``<h3>value</h3><p>label</p>`` pairs."""
     pairs = re.findall(r"<h3>([^<]+)</h3><p>([^<]+)</p>", page)
     counts: dict[str, int] = {}
     for value, label in pairs:
