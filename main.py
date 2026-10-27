@@ -5,6 +5,7 @@ import httpx
 import asyncio
 import functools
 import html
+import inspect
 import json
 import re
 import unicodedata
@@ -47,7 +48,28 @@ MAX_ROWS = 30
 # giving up, so a term that matches nothing can't walk the whole catalogue.
 FILTER_MAX_SCAN = 250
 
-mcp = MCPServer("kleinanzeigen-mcp")
+# Sent once when a client connects, so what every tool shares is said here
+# instead of in each tool's description, which the model reads on every turn.
+INSTRUCTIONS = """\
+Kleinanzeigen.de, Germany's classifieds site. Prices are in EUR.
+
+Which tool to use:
+- something to buy: search_kleinanzeigen. Scope it with a category from \
+list_categories and narrow it with the category's attributes from \
+get_category_filters; a place comes from search_locations.
+- one ad in full: get_ad_detail (full text, attributes, shipping), \
+get_ad_images (the photos themselves) or get_seller_info (who sells it).
+
+The category tree stops fairly high up: a finer cut like "Grafikkarten" is an \
+attribute value of "PC-Zubehör & Software", not a category.
+
+rows is at most 30; page on with the next_page a result returns, has_more says \
+whether anything is left. total is capped at 10000 by Kleinanzeigen.
+
+Fields without a value are left out of results.
+"""
+
+mcp = MCPServer("kleinanzeigen-mcp", instructions=INSTRUCTIONS)
 client = httpx.AsyncClient(http2=True)
 
 logger = logging.getLogger(__name__)
@@ -96,12 +118,20 @@ def _tool(fn):
     null fields left out. Left to the SDK, a dict is pretty-printed with a
     two-space indent and a list becomes one text block per item.
     structured_output stays off: it would send every result a second time as
-    structuredContent and add an output schema to the tool listing."""
+    structuredContent and add an output schema to the tool listing. The
+    docstring is dedented here because only Python 3.13+ does that itself; on
+    older ones every description line would carry four spaces of indent."""
     @functools.wraps(fn)
     async def wrapper(*args, **kwargs):
         result = await fn(*args, **kwargs)
         return json.dumps(_prune(result), ensure_ascii=False, separators=(",", ":"))
-    return mcp.tool(structured_output=False)(wrapper)
+    return mcp.tool(description=inspect.cleandoc(fn.__doc__ or ""), structured_output=False)(wrapper)
+
+
+def _content_tool(fn):
+    """Register `fn` as is, for a tool that returns content blocks rather than a
+    dict; its docstring is dedented like ``_tool``'s."""
+    return mcp.tool(description=inspect.cleandoc(fn.__doc__ or ""), structured_output=False)(fn)
 
 
 def _tool_errors(what: str):
@@ -477,74 +507,49 @@ async def search_kleinanzeigen(
     shippable: bool = False,
     include_top_ads: bool = False,
 ) -> dict:
-    """Search Kleinanzeigen listings. At least one of ``query`` or ``category``
-    is required.
+    """Search Kleinanzeigen listings. Needs a ``query``, a
+    ``category`` or both.
 
-    Scope to a ``category`` when you can: a bare ``query`` matches the **whole
-    ad text**, so it drags in accessories, bundles and spare parts, and with
-    ``sort="PRICE_ASCENDING"`` that junk takes the top spots.
+    A bare query matches the whole ad text and drags in accessories, bundles
+    and spare parts, so scope to a category when you can, and use
+    ``attributes`` over extra words.
 
-    **Put the model in ``query`` and every spec in ``require``.** Sellers write
-    a storage size as "128GB", "128 GB" or "256Gb" and many leave it out of the
-    title, so ``query="iPhone 13 128 GB", title_only=True`` finds almost nothing
-    while ``query="iPhone 13", require=["128gb"]`` finds what you meant.
+    Put the model in ``query`` and every spec in ``require``. Sellers write
+    "128GB", "128 GB" or leave it out of the title, so ``query="iPhone 13",
+    require=["128gb"]`` finds what ``query="iPhone 13 128 GB"`` misses.
 
-    Three filters, all applied here over what Kleinanzeigen returns:
+    These filters run here, paging on until ``rows`` matches turn up or 250 ads
+    were scanned (``scanned``):
+    - ``title_only``: every query word must be in the title.
+    - ``require``: every term must be in the title or description; a number
+      with its unit matches however it is spelled.
+    - ``exclude``: drop titles carrying any of these words, e.g. ``["pro",
+      "max"]``. A word also hits the tail of a compound ("kabel" in
+      "Ladekabel"), never a prefix ("pro" spares "Prozessor"). Don't exclude
+      ordinary nouns like "akku" or "display", real listings use them too.
 
-    - ``title_only=True`` -- every word of ``query`` must be in the **title**.
-      A glued-together model code matches either way round ("RTX4070" finds
-      "RTX 4070"), but a unit is not normalized: "128GB" does **not** find
-      "128 GB". Identity only.
-    - ``require`` -- all of these must appear in the **title or description**,
-      e.g. ``["128gb"]``. A number with its unit matches however it is spelled.
-      Capacity, RAM, colour, model year belong here.
-    - ``exclude`` -- drop ads whose **title** carries any of these, e.g.
-      ``["pro", "max"]``. Matches a whole word or a German compound tail
-      ("kabel" catches "Ladekabel"), never a mere prefix, so "pro" spares
-      "Prozessor". Model words are safe to exclude; **ordinary nouns are not**
-      ("akku", "display" appear in real listings you wanted).
-
-    Returns ``{total, rows_returned, next_page, has_more, results}``, plus
-    ``scanned`` when a client-side filter ran. ``results`` are trimmed ads
-    (id, title, ~250-char description, price, location, whether it ships,
-    seller, ``image_count``, link); ``get_ad_detail`` has the full text and
-    every attribute,
-    ``get_ad_images`` the pictures themselves. ``total`` is capped at 10000 by
-    Kleinanzeigen, so that value means "at least", not a real count.
-
-    Paid "TOP" placements are left out by default: they are pinned above the
-    sort order whatever the query, and are mostly repair shops and buyers
-    ("Ankauf") rather than the item. A ``price_amount`` of ``null`` is normal: it means
-    "zu verschenken" or "VB" (see ``price_type``), and those sort first
-    ascending.
+    A missing ``price_amount`` is normal: ``price_type`` then says "FREE" (zu
+    verschenken) or "PLEASE_CONTACT" (VB); with a price, PLEASE_CONTACT means
+    negotiable.
 
     Args:
-        query: Free-text search term, e.g. "fahrrad" or "rtx 5080".
-        category: Category id (int) or name ("PC-Zubehör & Software");
-            ``list_categories`` finds it. Includes subcategories.
-        attributes: Category-specific filters, e.g.
-            {"pc_zubehoer_software.art": "grafikkarten"} -- narrows far better
-            than words in ``query``. ``get_category_filters(category)`` lists
-            the valid keys and values; one marked ``multi_select`` also takes a
-            list, e.g. {"...art": ["grafikkarten", "mainboards"]}.
-        location_id: Restrict to a location/region, from ``search_locations``.
-        zip_code: Restrict to a German postcode instead of ``location_id``.
-        distance_km: Radius around ``location_id``/``zip_code`` in kilometres.
-        min_price / max_price: Price range.
-        price_currency: Currency for the price range. Default "EUR".
-        ad_type: "OFFERED" ("Ich biete") or "WANTED" ("Ich suche").
+        query: Search words.
+        category: Category id or name; includes its subcategories.
+        attributes: Category filters, e.g. ``{"pc_zubehoer_software.art":
+            "grafikkarten"}``; a ``multi_select`` one also takes a list. Keys
+            and values come from ``get_category_filters``.
+        location_id: From ``search_locations``.
+        zip_code: A German postcode, instead of ``location_id``.
+        distance_km: Radius around the location or postcode.
+        min_price / max_price: Price bounds.
+        ad_type: "OFFERED" (Ich biete) or "WANTED" (Ich suche).
         poster_type: "PRIVATE" or "COMMERCIAL".
-        sort: "RECOMMENDED" (default), "DATE_DESCENDING" (newest),
-            "PRICE_ASCENDING", "PRICE_DESCENDING" or "DISTANCE_ASCENDING"
-            (needs ``location_id``/``zip_code``).
-        rows: Max results to return. Default 5; raise it when you actually need
-            more, since each ad costs a few hundred tokens.
-        page: Zero-based page index; pass back ``next_page`` to continue.
-        picture_required: Only ads that have at least one picture.
-        buy_now_only: Only ads with "Direkt kaufen" enabled.
-        shippable: Only ads that offer shipping.
-        include_top_ads: Also return paid "TOP" placements (``is_top_ad``), as
-            the app does. Default False, which keeps the ranking honest.
+        sort: Default "RECOMMENDED"; "DISTANCE_ASCENDING" needs a location.
+        picture_required / buy_now_only / shippable: Only ads with photos /
+            "Direkt kaufen" / shipping.
+        include_top_ads: Also return paid "TOP" placements (``is_top_ad``).
+            They are pinned above any sort order and mostly repair shops and
+            buyers, so they are left out by default.
     """
     if not query and category is None:
         raise ToolError("Provide 'query' and/or 'category'.")
@@ -634,42 +639,28 @@ async def search_kleinanzeigen(
 @_tool
 @_tool_errors("ad")
 async def get_ad_detail(ad_id: int) -> dict:
-    """Everything about one ad: the full description, itemised attributes
-    ("Zustand", "Versand", ...), location, shipping options and how many photos
-    it has. Run it on an ``id`` from a search hit whenever the
-    trimmed search summary isn't enough to answer.
-
-    To actually look at the photos use ``get_ad_images``; for the seller's
-    profile and reputation ``get_seller_info`` with the result's ``seller_id``.
+    """One ad in full: the complete description, attributes by their
+    label ("Zustand", "Versand", ...), category, location, shipping options,
+    seller and ``image_count``.
 
     Args:
-        ad_id: The Kleinanzeigen ad id.
+        ad_id: The ad id from a search.
     """
     data = await _get(f"ads/{ad_id}.json")
     return _summarize_ad_detail(_ns(data, "ad"))
 
 
-@mcp.tool(structured_output=False)
+@_content_tool
 @_tool_errors("ad")
 async def get_ad_images(ad_id: int, max_images: int = 4) -> list:
-    """Fetch an ad's photos and return them as images you can actually look at.
-
-    Downloads up to ``max_images`` photos from Kleinanzeigen's CDN server-side
-    and returns them as image content blocks (base64), so a vision-capable
-    client sees the real pictures instead of just URLs. Call it with an id from
-    a search hit.
-
-    Reach for this whenever the pictures carry information you can't take on
-    trust from the text: the description is the seller's claim, the photos are
-    the evidence. Typical cases are judging the real condition (wear,
-    scratches, damage, completeness), reading details that only appear in an
-    image (a screenshot of specs, a label, a model or serial number, a display),
-    or confirming the item matches the description. As a rule of thumb, if your
-    answer depends on what the thing actually looks like, look at it.
+    """The ad's photos as images you can look at, up to
+    ``max_images`` (at most 10). Use them whenever the answer depends on what
+    the item looks like: condition, damage, completeness, or details only a
+    picture shows, such as a label or a screen.
 
     Args:
-        ad_id: The Kleinanzeigen ad id.
-        max_images: How many photos to fetch, 1-10. Default 4.
+        ad_id: The ad id from a search.
+        max_images: How many photos to fetch. Default 4.
     """
     max_images = max(1, min(int(max_images), 10))
     data = await _get(f"ads/{ad_id}.json")
@@ -698,19 +689,16 @@ async def get_ad_images(ad_id: int, max_images: int = 4) -> list:
 @_tool
 @_tool_errors("seller")
 async def get_seller_info(seller_id: int) -> dict:
-    """Who is selling: name, private vs commercial, member-since date, how
-    many ads they have run, followers, typical reply speed and Kleinanzeigen's
-    reputation score. Use it for the trust or plausibility check an ad itself
-    doesn't answer -- a one-day-old account dumping twenty phones reads very
-    differently from a five-year member with one listing.
+    """Who sells an ad: name, private or commercial, member
+    since, ads run, followers, reply speed and reputation score. For a trust
+    check the ad itself does not answer.
 
-    The profile half is the one endpoint Kleinanzeigen guards with IP-range
-    anti-fraud, so from a VPN or datacenter address it can 403 while everything
-    else works. That is reported in ``partial`` rather than failing the call.
+    The profile half is guarded by IP-range anti-fraud and can fail from VPN or
+    datacenter addresses; ``partial`` then says so and the reputation still
+    comes back.
 
     Args:
-        seller_id: The seller's user id, from a search hit's or ad detail's
-            ``seller_id``.
+        seller_id: ``seller_id`` from a search hit or ad detail.
     """
     # two independent services -- report whichever half answers instead of
     # losing a usable trust check to the other one's failure
@@ -752,15 +740,12 @@ async def get_seller_info(seller_id: int) -> dict:
 @_tool
 @_tool_errors("location")
 async def search_locations(query: str) -> list[dict]:
-    """Look up location ids for ``search_kleinanzeigen``'s ``location_id``,
-    by name prefix (as the app's location picker does). Covers federal states,
-    cities and districts. Returns ``[{id, name, region, radius_km}]``.
-
-    Pair the id with ``distance_km`` to search a radius. For a plain postcode
-    search you don't need this -- pass ``zip_code`` to the search directly.
+    """Find location ids for the ``location_id`` filter of
+    ``search_kleinanzeigen`` by name prefix: states, cities and districts. For
+    a postcode, pass ``zip_code`` to the search instead.
 
     Args:
-        query: Name prefix to search, e.g. "berl" for "Berlin".
+        query: Start of the name, e.g. "berl".
     """
     data = await _get("locations.json", params={"depth": 1, "q": query})
     payload = _ns(data, "locations")
@@ -780,19 +765,13 @@ async def search_locations(query: str) -> list[dict]:
 @_tool
 @_tool_errors("category filter")
 async def get_category_filters(category: Union[int, str]) -> list[dict]:
-    """The attribute filters a category supports, for
-    ``search_kleinanzeigen(attributes=...)``. These narrow a search far better
-    than extra words in ``query`` -- e.g. in "PC-Zubehör & Software" they cut
-    it down to ``grafikkarten`` or ``mainboards`` outright.
-
-    Read straight from Kleinanzeigen's own search-options schema, so the keys
-    and values are exact rather than guessed. Returns
-    ``[{key, label, type, multi_select, values}]``; ``values`` is
-    ``[{value, label}, ...]`` for enum attributes and empty for free-form ones.
-    An attribute with ``multi_select`` accepts a list of values at once.
+    """The attribute filters of a category, for the
+    ``attributes`` of ``search_kleinanzeigen``: ``[{key, label, type,
+    multi_select, values: [{value, label}]}]``. ``values`` is empty for
+    free-form attributes.
 
     Args:
-        category: Category id (int) or name, same as ``search_kleinanzeigen``.
+        category: Category id or name.
     """
     data = await _get(f"ads/search-metadata/{_resolve_category(category)}.json")
     payload = _ns(data, "ads-search-options")
@@ -812,22 +791,14 @@ async def get_category_filters(category: Union[int, str]) -> list[dict]:
 
 @_tool
 async def list_categories(query: Optional[str] = None, limit: int = 40) -> dict:
-    """Browse the category tree to find the ``category`` that
-    ``search_kleinanzeigen`` and ``get_category_filters`` take. Scoping a
-    search to a category is the single best way to stop a keyword dragging in
-    accessories and spare parts.
-
-    Returns ``{count, categories: [{id, title, path}]}``, where ``path`` shows
-    where a category sits in the tree ("Elektronik / PC-Zubehör & Software").
-    The whole tree (159 categories) ships with the server, so this costs no
-    request. Note the tree stops at that level -- finer cuts like "Grafikkarten"
-    are attribute filters, from ``get_category_filters``.
+    """Find category ids for ``search_kleinanzeigen`` and
+    ``get_category_filters``. Returns ``{count, categories: [{id, title,
+    path}]}``.
 
     Args:
-        query: Case/accent-insensitive substring matched against the whole
-            path, e.g. "pc-zubehör" or "elektronik". Omit to list everything,
-            up to ``limit``.
-        limit: Max number of categories to return. Default 40.
+        query: Part of the category path, e.g. "pc-zubehör". Omit to list
+            everything up to ``limit``.
+        limit: Default 40.
     """
     flat: list = []
     _walk_categories(_CATEGORIES, [], flat)
