@@ -394,14 +394,51 @@ def _resolve_category(category: Union[int, str]) -> int:
         raise ToolError(f"Category name {text!r} is ambiguous ({paths}). Pass the id instead.")
 
     partial = [(n, p) for n, p in flat if wanted in _norm(p)]
+    if not partial:
+        # words in any order, and the tree's word with or without an ending
+        # ("Handys" finds "Handy & Telefon", "Software PC-Zubehör" the reverse)
+        words = _category_words(text)
+        partial = [(n, p) for n, p in flat if _word_overlap(words, _tokens(p)) == len(words)]
     if len(partial) == 1:
         return partial[0][0]["id"]
     if partial:
-        raise ToolError(f"Category {text!r} is ambiguous. Closest matches: "
-                        f"{', '.join(p for _, p in partial[:8])}. Pass the id instead.")
-    raise ToolError(f"Unknown category {text!r}. Use list_categories to find one -- and note "
-                    f"the tree stops fairly high up, so a finer cut like 'Grafikkarten' is an "
-                    f"attribute value (get_category_filters), not a category.")
+        matches = ", ".join(f"{n['id']} ({p})" for n, p in partial[:8])
+        raise ToolError(f"Category {text!r} is ambiguous. Closest matches: {matches}. Pass the id instead.")
+    raise ToolError(f"Unknown category {text!r}.{_closest_categories(text, flat)} Use list_categories "
+                    f"to find one -- and note the tree stops fairly high up, so a finer cut like "
+                    f"'Grafikkarten' is an attribute value (get_category_filters), not a category.")
+
+
+# What a model reaches for first, in the tree's own words
+_CATEGORY_ALIASES = {"smartphone": "handy", "smartphones": "handy", "fernseher": "tv"}
+
+
+def _category_words(text: str) -> set:
+    return {_CATEGORY_ALIASES.get(word, word) for word in _tokens(text)}
+
+
+def _word_overlap(wanted: set, words: set, *, max_ending: int = 3) -> int:
+    """How many of the wanted words a category's words cover. A word counts
+    when it is the same, or when one is the other plus an ending of up to
+    `max_ending` letters ("handys" and "handy", "fahrrader" and "fahrrad"); that
+    needs four letters, so "pc" does not cover "pcs"."""
+    def covers(want: str) -> bool:
+        return any(want == word or (min(len(want), len(word)) >= 4
+                                    and abs(len(want) - len(word)) <= max_ending
+                                    and (want.startswith(word) or word.startswith(want)))
+                   for word in words)
+    return sum(covers(want) for want in wanted)
+
+
+def _closest_categories(text: str, flat: list, limit: int = 5) -> str:
+    """" Closest: <id> (<path>), ..." for the categories sharing the most words
+    with `text`, or "" when none shares any. A compound counts here too, so
+    "Gartenmöbel" points at "Haus & Garten"."""
+    words = _category_words(text)
+    scored = sorted(((_word_overlap(words, _tokens(p), max_ending=99), len(p), n["id"], p) for n, p in flat),
+                    key=lambda row: (-row[0], row[1]))
+    best = [f"{cid} ({path})" for score, _, cid, path in scored[:limit] if score]
+    return f" Closest: {', '.join(best)}." if best else ""
 
 
 def _clean_description(value: Optional[str]) -> str:
