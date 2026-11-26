@@ -276,7 +276,7 @@ high up: finer cuts like "Grafikkarten" are attribute filters.
   ships the tree wrapped in JAXB envelopes and a single "Alle Kategorien"
   pseudo-root). Re-run it if Kleinanzeigen changes their categories.
 - Releases: bump `version` in `pyproject.toml` and `manifest.json`, then push a
-  tag such as `v1.0.1`. The release workflow runs the tests, builds the wheel,
+  tag such as `v1.1` (a `.0` patch may be left off, so `v1.1` releases 1.1.0). The release workflow runs the tests, builds the wheel,
   the sdist and the `.mcpb` bundle and attaches them to a GitHub release.
 - The badges read `coverage.json` from the `coverage` branch.
   `scripts/update_coverage.py` refreshes it from Kleinanzeigen's public "Über
