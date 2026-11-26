@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kleinanzeigen-mcp"
+version = "1.0.0"
+description = "MCP server for Kleinanzeigen.de classifieds: search ads, read details and photos, check sellers"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Samxel" }]
+keywords = ["mcp", "kleinanzeigen", "classifieds", "claude"]
+dependencies = ["mcp>=2.3.0,<3", "httpx[http2]>=0.28.1"]
+
+[project.scripts]
+kleinanzeigen-mcp = "kleinanzeigen.server:main"
+
+[project.urls]
+Repository = "https://github.com/Samxel/kleinanzeigen-mcp"
+Issues = "https://github.com/Samxel/kleinanzeigen-mcp/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["kleinanzeigen"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [".github", "tests", "scripts", "manifest.json", ".mcpbignore"]

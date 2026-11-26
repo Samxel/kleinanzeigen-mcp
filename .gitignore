@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .idea
 .pytest_cache/
+dist/
+*.mcpb
