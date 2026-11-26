@@ -3,6 +3,7 @@
 import httpx
 import pytest
 
+from conftest import ToolFailed
 from samples import ad, attribute, detail, enum_filter, locations, profile, reputation, search, search_options
 
 pytestmark = pytest.mark.anyio
@@ -119,9 +120,24 @@ async def test_location_and_filter_lookups(ka, call):
     ka.on(API, "/api/ads/search-metadata/225.json", search_options(
         enum_filter("pc_zubehoer_software.art", "Art", ("grafikkarten", "Grafikkarten"))))
     berlin = await call("search_locations", query="berl")
-    assert [loc["name"] for loc in berlin] == ["Berlin", "Pankow (Berlin)"]
+    assert [loc["name"] for loc in berlin["locations"]] == ["Berlin", "Pankow (Berlin)"]
+    assert berlin["count"] == 2
+    one = await call("search_locations", query="berl", limit=1)
+    assert (one["count"], len(one["locations"])) == (2, 1)
     filters = await call("get_category_filters", category=225)
     assert filters[0]["key"] == "pc_zubehoer_software.art" and filters[0]["multi_select"] is True
+    assert filters[0]["values"] == {"grafikkarten": "Grafikkarten"}
+
+
+async def test_category_filters_narrow_to_one_key(ka, call):
+    ka.on(API, "/api/ads/search-metadata/216.json", search_options(
+        enum_filter("autos.marke", "Marke", ("bmw", "BMW"), multi=False),
+        enum_filter("autos.fuel", "Kraftstoff", ("diesel", "Diesel"))))
+    by_label = await call("get_category_filters", category=216, key="marke")
+    by_key = await call("get_category_filters", category=216, key="autos.fuel")
+    assert ([f["key"] for f in by_label], [f["key"] for f in by_key]) == (["autos.marke"], ["autos.fuel"])
+    with pytest.raises(ToolFailed, match="It has: autos.marke, autos.fuel"):
+        await call("get_category_filters", category=216, key="farbe")
 
 
 async def test_category_list(call):

@@ -150,6 +150,13 @@ def _rows(rows: int, offset: int = 0) -> int:
     return min(rows, MAX_ROWS)
 
 
+def _limit(limit: int, most: int) -> int:
+    """`limit` clamped to 1..most, so a list tool cannot flood the context."""
+    if limit < 1:
+        raise ToolError(f"limit must be at least 1 (got {limit}).")
+    return min(limit, most)
+
+
 def _check_range(name: str, low, high) -> None:
     """Reject an inverted range instead of letting Kleinanzeigen drop the filter
     and quietly answer with everything."""
@@ -458,19 +465,21 @@ async def get_seller_info(seller_id: int) -> dict:
 
 @_tool
 @api.tool_errors("location")
-async def search_locations(query: str) -> list[dict]:
+async def search_locations(query: str, limit: int = 10) -> dict:
     """Find location ids for the ``location_id`` filter of
     ``search_kleinanzeigen`` by name prefix: states, cities and districts. For
     a postcode, pass ``zip_code`` to the search instead.
 
     Args:
         query: Start of the name, e.g. "berl".
+        limit: At most 50. Default 10.
     """
+    limit = _limit(limit, 50)
     data = await api.get("locations.json", params={"depth": 1, "q": query})
     payload = api.collection(data, "locations")
     locations = payload.get("location", [])
     out = []
-    for loc in locations:
+    for loc in locations[:limit]:
         regions = (loc.get("regions") or {}).get("region") or []
         out.append({
             "id": loc.get("id"),
@@ -478,31 +487,40 @@ async def search_locations(query: str) -> list[dict]:
             "region": api.unwrap(regions[0].get("localized-name")) if regions else None,
             "radius_km": api.unwrap(loc.get("radius")),
         })
-    return out
+    return {"count": len(locations), "locations": out}
 
 
 @_tool
 @api.tool_errors("category filter")
-async def get_category_filters(category: Union[int, str]) -> list[dict]:
-    """The attribute filters of a category, for the
-    ``attributes`` of ``search_kleinanzeigen``: ``[{key, label, type,
-    multi_select, values: [{value, label}]}]``. ``values`` is empty for
-    free-form attributes.
+async def get_category_filters(category: Union[int, str], key: Optional[str] = None) -> list[dict]:
+    """The attribute filters of a category, for the ``attributes`` of
+    ``search_kleinanzeigen``: ``[{key, label, type, multi_select, values}]``,
+    where ``values`` maps each value to its label (``{"bmw": "BMW"}``) and is
+    left out for free-form attributes.
 
     Args:
         category: Category id or name.
+        key: Only this attribute (a key or a label, e.g. "autos.marke" or
+            "Marke"), when the category has many with long value lists.
     """
     data = await api.get(f"ads/search-metadata/{categories.resolve(category)}.json")
     payload = api.collection(data, "ads-search-options")
     attributes = (payload.get("attributes") or {}).get("attribute", [])
+    if key:
+        wanted = matching.norm(key)
+        picked = [a for a in attributes
+                  if wanted in (matching.norm(a.get("name") or ""), matching.norm(a.get("localized-label") or ""))]
+        if not picked:
+            known = ", ".join(a.get("name") or "" for a in attributes) or "none"
+            raise ToolError(f"No filter {key!r} in this category. It has: {known}.")
+        attributes = picked
     return [
         {
             "key": attr.get("name"),
             "label": attr.get("localized-label"),
             "type": attr.get("type"),
             "multi_select": attr.get("search-multi-select") == "true",
-            "values": [{"value": v.get("value"), "label": v.get("localized-label")}
-                       for v in attr.get("supported-value", [])],
+            "values": {v.get("value"): v.get("localized-label") for v in attr.get("supported-value", [])} or None,
         }
         for attr in attributes
     ]
@@ -516,8 +534,9 @@ async def list_categories(query: Optional[str] = None, limit: int = 40) -> dict:
     Args:
         query: Part of the category path, e.g. "pc-zubehör". Omit to list
             everything up to ``limit``.
-        limit: Default 40.
+        limit: At most 100. Default 40.
     """
+    limit = _limit(limit, 100)
     flat: list = []
     categories.walk(categories.CATEGORIES, [], flat)
     q = matching.norm(query) if query else None

@@ -35,5 +35,5 @@ async def test_detail_names_attributes_by_their_label(ka, call):
 
 async def test_locations_carry_no_coordinates(ka, call):
     ka.on(API, "/api/locations.json", locations("Berlin"))
-    [berlin] = await call("search_locations", query="berl")
+    [berlin] = (await call("search_locations", query="berl"))["locations"]
     assert set(berlin) == {"id", "name", "region", "radius_km"}

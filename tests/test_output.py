@@ -4,7 +4,7 @@ import pytest
 from mcp import Client
 
 import main
-from samples import ad, locations, search
+from samples import ad, enum_filter, locations, search, search_options
 
 pytestmark = pytest.mark.anyio
 
@@ -27,8 +27,9 @@ async def test_results_are_compact_single_text_blocks(ka):
 
 
 async def test_a_list_result_is_one_block(ka):
-    ka.on("api.kleinanzeigen.de", "/api/locations.json", locations("Berlin", "Pankow (Berlin)"))
+    ka.on("api.kleinanzeigen.de", "/api/ads/search-metadata/225.json", search_options(
+        enum_filter("a.art", "Art", ("x", "X")), enum_filter("a.zustand", "Zustand", ("neu", "Neu"))))
     async with Client(main.mcp) as client:
-        result = await client.call_tool("search_locations", {"query": "berl"})
+        result = await client.call_tool("get_category_filters", {"category": 225})
     [block] = result.content
     assert block.text.startswith("[{") and result.structured_content is None
