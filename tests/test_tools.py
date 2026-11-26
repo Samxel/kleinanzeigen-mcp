@@ -150,3 +150,16 @@ async def test_paid_top_ads_stay_out_unless_asked_for(ka, call):
     await call("search_kleinanzeigen", query="iPhone 13")
     await call("search_kleinanzeigen", query="iPhone 13", include_top_ads=True)
     assert [r.url.params["includeTopAds"] for r in ka.sent(SEARCH)] == ["false", "true"]
+
+
+async def test_detail_of_several_ads_at_once(ka, call):
+    ka.on(API, "/api/ads/7.json", detail(7, "iPhone 13"))
+    ka.on(API, "/api/ads/8.json", detail(8, "iPhone 14"))
+    ka.on(API, "/api/ads/9.json", httpx.Response(404, text="not found"))
+    result = await call("get_ad_detail", ids=[7, 8, 9, 7])
+    assert [ad["title"] for ad in result["ads"]] == ["iPhone 13", "iPhone 14"]
+    assert result["count"] == 2 and [f["id"] for f in result["failed"]] == ["9"]
+    with pytest.raises(ToolFailed, match="either 'ad_id' or 'ids'"):
+        await call("get_ad_detail")
+    with pytest.raises(ToolFailed, match="At most 10"):
+        await call("get_ad_detail", ids=list(range(11)))

@@ -357,16 +357,44 @@ async def search_kleinanzeigen(
     return result
 
 
+MAX_DETAILS = 10
+
+
+async def _details(ad_ids: list[int]) -> dict:
+    """Several ads at once, fetched side by side. One that fails (deleted,
+    blocked) is listed under ``failed`` rather than failing the rest."""
+    fetch = api.tool_errors("ad")(lambda ad_id: api.get(f"ads/{ad_id}.json"))
+
+    async def one(ad_id):
+        try:
+            return summaries.summarize_ad_detail(api.collection(await fetch(ad_id), "ad")), None
+        except ToolError as exc:
+            return None, {"id": str(ad_id), "error": str(exc)}
+
+    done = await asyncio.gather(*(one(i) for i in ad_ids))
+    ads = [ad for ad, _ in done if ad]
+    failed = [err for _, err in done if err]
+    return {"count": len(ads), "ads": ads, "failed": failed or None}
+
+
 @_tool
 @api.tool_errors("ad")
-async def get_ad_detail(ad_id: int) -> dict:
+async def get_ad_detail(ad_id: Optional[int] = None, ids: Optional[list[int]] = None) -> dict:
     """One ad in full: the complete description, attributes by their
     label ("Zustand", "Versand", ...), category, location, shipping options,
-    seller and ``image_count``.
+    seller and ``image_count``. To compare several, pass up to 10 ``ids``
+    instead; they come back as ``{count, ads, failed}``.
 
     Args:
         ad_id: The ad id from a search.
+        ids: Several ad ids, instead of ``ad_id``.
     """
+    if (ad_id is None) == (not ids):
+        raise ToolError("Pass either 'ad_id' or 'ids'.")
+    if ids:
+        if len(ids) > MAX_DETAILS:
+            raise ToolError(f"At most {MAX_DETAILS} ids per call (got {len(ids)}).")
+        return await _details(list(dict.fromkeys(ids)))
     data = await api.get(f"ads/{ad_id}.json")
     return summaries.summarize_ad_detail(api.collection(data, "ad"))
 
