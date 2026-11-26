@@ -3,7 +3,7 @@
 import pytest
 from mcp import Client
 
-import main
+from kleinanzeigen import server as main
 from samples import ad, enum_filter, locations, search, search_options
 
 pytestmark = pytest.mark.anyio

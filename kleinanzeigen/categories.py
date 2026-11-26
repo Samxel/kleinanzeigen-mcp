@@ -12,7 +12,7 @@ from . import matching
 
 
 def _load_categories() -> list[dict]:
-    path = Path(__file__).parent.parent / "data" / "categories.json"
+    path = Path(__file__).parent / "data" / "categories.json"
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:

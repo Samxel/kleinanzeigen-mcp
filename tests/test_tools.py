@@ -79,7 +79,7 @@ async def test_detail_reads_the_whole_ad(ka, call):
 
 async def test_images_come_back_as_image_content(ka):
     from mcp import Client
-    import main
+    from kleinanzeigen import server as main
     ka.on(API, "/api/ads/7.json", detail(7, "iPhone 13", images=3))
     ka.on("img.kleinanzeigen.de", "/", httpx.Response(200, content=b"\xff\xd8jpeg",
                                                       headers={"content-type": "image/jpeg"}))
@@ -91,7 +91,7 @@ async def test_images_come_back_as_image_content(ka):
 
 async def test_high_detail_images_ask_for_the_larger_size(ka):
     from mcp import Client
-    import main
+    from kleinanzeigen import server as main
     ka.on(API, "/api/ads/7.json", detail(7, "iPhone 13", images=1))
     ka.on("img.kleinanzeigen.de", "/", httpx.Response(200, content=b"\xff\xd8jpeg",
                                                       headers={"content-type": "image/jpeg"}))

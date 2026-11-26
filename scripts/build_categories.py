@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch Kleinanzeigen's category tree and flatten it into ``data/categories.json``.
+"""Fetch Kleinanzeigen's category tree and flatten it into ``kleinanzeigen/data/categories.json``.
 
 ``api/categories.json`` wraps everything in JAXB envelopes and a single
 "Alle Kategorien" pseudo-root; this strips both down to the same
@@ -43,7 +43,7 @@ def main() -> None:
     root = wrap["value"]["category"][0]  # the "Alle Kategorien" pseudo-root
     tree = [flatten(c) for c in root.get("category", [])]
 
-    out = Path(__file__).resolve().parent.parent / "data" / "categories.json"
+    out = Path(__file__).resolve().parent.parent / "kleinanzeigen" / "data" / "categories.json"
     out.write_text(json.dumps(tree, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"wrote {out} ({len(tree)} top-level categories)")
 

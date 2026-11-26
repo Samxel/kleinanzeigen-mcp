@@ -38,4 +38,4 @@ body:
     attributes:
       label: Data
       options:
-        - label: This probably needs the bundled data (data/) to be re-crawled
+        - label: This probably needs the bundled data (kleinanzeigen/data/) to be re-crawled
