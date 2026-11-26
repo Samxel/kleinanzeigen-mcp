@@ -21,7 +21,7 @@ into JSON (see [Response shape](#response-shape) below).
 
 | Header | Value |
 |---|---|
-| `authorization` | `Basic YW5kcm9pZDpUYVI2MHBFdHRZ` (static, decodes to `android:TaR60pEttY`) |
+| `authorization` | static Basic credential, `KA_BASIC_AUTH` in `kleinanzeigen/api.py` |
 | `x-ebayk-app` | App installation id, see [Auth](#auth) |
 | `x-ebayk-userid-token` | Empty when logged out |
 | `user-agent` | `Kleinanzeigen/2026.37.1 (Android 14; ...)` |
@@ -30,11 +30,11 @@ into JSON (see [Response shape](#response-shape) below).
 
 ## Auth
 
-`api.kleinanzeigen.de` needs a **static** Basic-auth credential baked into the
-app plus a **free-form client id** (`x-ebayk-app`): a UUIDv4 immediately
+`api.kleinanzeigen.de` needs the **static** Basic-auth credential the app sends
+(the same for every user) plus a **free-form client id** (`x-ebayk-app`): a UUIDv4 immediately
 followed by the epoch-millis timestamp of when it was generated, no separator
 (e.g. `7243bedb-2427-4f72-bf89-567ecb1c74661789285561410`). Across several
-captured app launches this id was different every time and a brand-new,
+app launches this id was different every time and a brand-new,
 never-before-seen value was accepted immediately -- there's no visible
 registration call, so it looks like the server does not validate it, just logs
 it. `kleinanzeigen/api.py` generates one per process.
@@ -45,15 +45,15 @@ it. `kleinanzeigen/api.py` generates one per process.
 |---|---|---|
 | `GET` | `api.kleinanzeigen.de/api/ads.json` | The real search. See [Search](#search) |
 | `GET` | `api.kleinanzeigen.de/api/ads/{id}.json` | Full ad detail. See [Ad detail](#ad-detail) |
-| `GET` | `api.kleinanzeigen.de/api/ads/similar/{id}.json` | Similar ads, same shape as search results (captured, not wrapped in a tool) |
-| `GET` | `api.kleinanzeigen.de/api/ads/seller-other-ads/{id}.json` | Other ads from the same seller (captured, not wrapped in a tool) |
+| `GET` | `api.kleinanzeigen.de/api/ads/similar/{id}.json` | Similar ads, same shape as search results (not wrapped in a tool) |
+| `GET` | `api.kleinanzeigen.de/api/ads/seller-other-ads/{id}.json` | Other ads from the same seller (not wrapped in a tool) |
 | `GET` | `api.kleinanzeigen.de/api/users/public/{id}/profile.json` | Seller profile, plain JSON. See [Seller info](#seller-info). The one endpoint with IP-range anti-fraud (see below) |
 | `GET` | `gateway.kleinanzeigen.de/user-reputation-service/public/users/{id}/reputation-summary` | Seller reputation score, plain JSON |
 | `GET` | `api.kleinanzeigen.de/api/categories.json` | Full category tree, JAXB-nested; flattened by `scripts/build_categories.py` |
 | `GET` | `api.kleinanzeigen.de/api/ads/search-metadata/{categoryId}.json` | The server's own search-param schema, global params plus this category's `attr[]` filters. See [Category filters](#category-filters) |
 | `GET` | `api.kleinanzeigen.de/api/locations.json?depth=1&q=<prefix>` | Location/region typeahead, returns ids for `locationId` |
-| `POST` | `autocomplete.kleinanzeigen.de/1/indexes/ebayk_prod_suggest/query` | Algolia search-suggestion typeahead (captured, auth not yet inspected) |
-| `GET` | `api.kleinanzeigen.de/api/v2/counters/ads/watchlist?adIds=<id>` | Whether an ad is on the current (anonymous) watchlist -- only the read side was captured, no add/remove call |
+| `POST` | `autocomplete.kleinanzeigen.de/1/indexes/ebayk_prod_suggest/query` | Algolia search-suggestion typeahead (auth not checked yet) |
+| `GET` | `api.kleinanzeigen.de/api/v2/counters/ads/watchlist?adIds=<id>` | Whether an ad is on the current (anonymous) watchlist -- only the read side is known, no add/remove call |
 | `GET` | `img.kleinanzeigen.de/api/v1/prod-ads/images/{hash}?rule=$_N.AUTO` | Image CDN; `N` selects size (`0`=thumbnail, `1`=large, `2`=teaser, `59`=extraLarge, `57`=XXL) |
 
 ## Search

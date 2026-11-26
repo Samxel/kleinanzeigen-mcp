@@ -23,15 +23,14 @@ KA_ECG_USER_AGENT = "ebayk-android-app-2026.37.1"
 KA_ECG_USER_VERSION = "2026.37.1"
 
 # --- Request authentication ------------------------------------------------
-# Every request carries a static HTTP Basic credential baked into the app
-# (reverse-engineered from the APK, not user-specific). Decodes to
-# "android:TaR60pEttY".
+# Every request carries the static HTTP Basic credential the Android app sends,
+# the same for every user.
 KA_BASIC_AUTH = "Basic YW5kcm9pZDpUYVI2MHBFdHRZ"
 
 # `x-ebayk-app` identifies the app installation: a UUIDv4 immediately followed
 # by the epoch-millis timestamp of when it was generated, no separator (e.g.
-# "7243bedb-2427-4f72-bf89-567ecb1c74661789285561410"). Captured traffic shows
-# a fresh, never-before-seen value accepted immediately with no separate
+# "7243bedb-2427-4f72-bf89-567ecb1c74661789285561410"). A fresh,
+# never-before-seen value is accepted immediately with no separate
 # registration call, so it looks like a free-form client-generated id the
 # server does not validate -- generated once per process and reused here.
 _installation_id = f"{uuid.uuid4()}{int(time.time() * 1000)}"
