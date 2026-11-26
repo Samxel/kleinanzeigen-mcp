@@ -275,14 +275,14 @@ high up: finer cuts like "Grafikkarten" are attribute filters.
   ships the tree wrapped in JAXB envelopes and a single "Alle Kategorien"
   pseudo-root). Re-run it if Kleinanzeigen changes their categories.
 - Releases: bump `version` in `pyproject.toml` and `manifest.json`, then push a
-  tag such as `v1.1` (a `.0` patch may be left off, so `v1.1` releases 1.1.0). The release workflow runs the tests, builds the wheel,
-  the sdist and the `.mcpb` bundle and attaches them to a GitHub release.
+  tag such as `v1.1`. A `.0` patch may be left off the tag, so `v1.1` releases
+  1.1.0. The release workflow runs the tests, builds the wheel, the sdist and
+  the `.mcpb` bundle and attaches them to a GitHub release.
 - The badges read `coverage.json` from the `coverage` branch.
   `scripts/update_coverage.py` refreshes it from Kleinanzeigen's public "Über
   uns" page, and a daily GitHub Action commits any change there, so the counts
-  don't add a commit to `master` every day.
+  don't add a commit to `main` every day.
 - API details are documented in [`search_api.md`](search_api.md).
-- This uses Kleinanzeigen's internal mobile API, not an official one. Be nice to it.
 
 ## Disclaimer
 
@@ -290,11 +290,13 @@ This is an independent, unofficial project and is not affiliated with, endorsed
 by, or connected to Kleinanzeigen or Adevinta. "Kleinanzeigen" and all related
 trademarks belong to their respective owners.
 
-It's published for educational and research purposes only. It talks to
-Kleinanzeigen's internal API, which is not meant for public use and may break
-or change at any time. You are responsible for how you use it: respect
-Kleinanzeigen's Terms of Service, robots rules and applicable law, and don't
-hammer their servers.
+It uses an unofficial interface of the Kleinanzeigen app, which can change or
+go away at any time. You are responsible for how you use it: respect
+Kleinanzeigen's Terms of Service and applicable law, don't hammer their
+servers, and don't collect personal data from listings.
+
+If you're a rights holder and have a concern about this repository, please open
+an issue and I'll respond promptly.
 
 ## License
 

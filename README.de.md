@@ -118,8 +118,8 @@ HTTPS-URL unter **Settings > Connectors > Add custom connector** ein. Dann kann
 aber jeder, der die URL kennt, den Server nutzen, also stell eine
 Authentifizierung davor.
 
-Alle Tools sind als nur lesend markiert, Clients, die das beachten, fragen also
-nicht vor jedem Aufruf nach. In Claude Desktop kannst du außerdem unter
+Alle Tools sind als rein lesend markiert. Clients, die das beachten, fragen
+deshalb nicht vor jedem Aufruf nach. In Claude Desktop kannst du außerdem unter
 **Settings > Connectors > kleinanzeigen** das Dropdown rechts bei den Tools auf
 **Always allow** stellen.
 
@@ -175,7 +175,7 @@ Server-Anweisungen, statt in jedem Treffer wiederholt zu werden.
 
 Suche per Freitext und/oder Kategorie (ID oder Name; ein Name wird so
 erkannt, wie ein Modell ihn schreibt: „Handys“ findet „Handy & Telefon“,
-„Laptop“ findet „Laptops & Notebooks“, und bei einem Fehlgriff kommen die
+„Laptop“ findet „Laptops & Notebooks“, und gibt es den Namen nicht, kommen die
 ähnlichsten Kategorien als Vorschlag). Filter für kategoriespezifische
 Merkmale, Ort mit Umkreis oder Postleitzahl, Preisspanne, Angebot/Gesuch,
 privat/gewerblich, Versand und „Direkt kaufen“, dazu Sortierung und Blättern
@@ -285,39 +285,41 @@ Merkmalfilter.
   einfügt, und was alle Tools gemeinsam haben, steht einmal in den
   Server-Anweisungen statt in jeder Tool-Beschreibung. All das hält klein, was
   das Modell lesen muss.
-- `kleinanzeigen/data/categories.json` ist ein flacher Abzug des
+- `kleinanzeigen/data/categories.json` ist eine flache Kopie des
   Kategoriebaums von Kleinanzeigen (title, id, children), gebaut von
   `scripts/build_categories.py` aus dem aktuellen `api/categories.json` (das
   den Baum in JAXB-Hüllen und unter einer einzigen Pseudo-Wurzel „Alle
   Kategorien“ liefert). Neu ausführen, wenn Kleinanzeigen die Kategorien
   ändert.
 - Releases: `version` in `pyproject.toml` und `manifest.json` erhöhen, dann
-  einen Tag wie `v1.1` pushen (eine Patch-Stelle `.0` darf fehlen, `v1.1` veröffentlicht also 1.1.0). Der Release-Workflow lässt die Tests laufen,
-  baut Wheel, sdist und das `.mcpb`-Bundle und hängt sie an ein GitHub-Release.
-- Die Badges lesen `coverage.json` aus dem Branch `coverage`.
+  einen Tag wie `v1.1` pushen. Eine Patch-Version `.0` kann man im Tag
+  weglassen, `v1.1` veröffentlicht also 1.1.0. Der Release-Workflow lässt die
+  Tests laufen, baut Wheel, sdist und das `.mcpb`-Bundle und hängt sie an ein
+  GitHub-Release.
+- Die Badges holen ihre Zahlen aus `coverage.json` im Branch `coverage`.
   `scripts/update_coverage.py` aktualisiert die Datei von der öffentlichen
   Seite „Über uns“ von Kleinanzeigen, und eine tägliche GitHub Action
   committet Änderungen dorthin, damit die Zahlen nicht jeden Tag einen Commit
-  in `master` erzeugen.
+  in `main` erzeugen.
 - Die API ist in [`search_api.md`](search_api.md) dokumentiert (auf Englisch).
-- Das hier nutzt die interne App-API von Kleinanzeigen, keine offizielle.
-  Geh pfleglich damit um.
 
 ## Haftungsausschluss
 
-Das ist ein unabhängiges, inoffizielles Projekt und steht in keiner Verbindung
-zu Kleinanzeigen oder Adevinta, wird von ihnen weder unterstützt noch
-empfohlen. „Kleinanzeigen“ und alle zugehörigen Marken gehören ihren
-jeweiligen Inhabern.
+Das ist ein unabhängiges, inoffizielles Projekt ohne Verbindung zu
+Kleinanzeigen oder Adevinta; beide unterstützen oder empfehlen es nicht.
+„Kleinanzeigen“ und alle zugehörigen Marken gehören ihren jeweiligen Inhabern.
 
-Es wird nur zu Lern- und Forschungszwecken veröffentlicht. Es spricht mit der
-internen API von Kleinanzeigen, die nicht für die Öffentlichkeit gedacht ist
-und sich jederzeit ändern oder wegfallen kann. Du bist dafür verantwortlich,
-wie du es nutzt: Halte dich an die Nutzungsbedingungen von Kleinanzeigen, die
-Robots-Regeln und geltendes Recht, und überlaste die Server nicht.
+Es nutzt eine inoffizielle Schnittstelle der Kleinanzeigen-App, die sich
+jederzeit ändern oder wegfallen kann. Du bist dafür verantwortlich, wie du es
+nutzt: Halte dich an die Nutzungsbedingungen von Kleinanzeigen und an geltendes
+Recht, überlaste die Server nicht und sammle keine personenbezogenen Daten aus
+Anzeigen.
+
+Falls du Rechteinhaber bist und Bedenken zu diesem Repository hast, eröffne
+bitte ein Issue, ich melde mich umgehend.
 
 ## Lizenz
 
-[`MIT LICENSE`](LICENSE). Bereitgestellt „wie besehen“, ohne Gewährleistung.
+[`MIT LICENSE`](LICENSE). Ohne Gewähr.
 
 <p align="center"><sub><a href="README.md">Read this in English</a></sub></p>
