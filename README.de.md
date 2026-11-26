@@ -231,9 +231,9 @@ Bildschirm.
 <summary><code>get_seller_info(seller_id)</code>: sehen, wer verkauft</summary>
 
 Name, privat oder gewerblich, Mitglied seit, Zahl der Anzeigen, Follower,
-Antwortzeit und der Bewertungswert von Kleinanzeigen. Der Profilteil ist durch
-einen IP-Bereich-Betrugsschutz abgesichert und kann über VPN- oder
-Rechenzentrumsadressen scheitern; `partial` sagt das dann, und die Bewertung
+Antwortzeit und der Bewertungswert von Kleinanzeigen. Der Profilteil steckt
+hinter einem Betrugsschutz, der nach IP-Bereichen filtert, und kann von VPN-
+oder Rechenzentrumsadressen aus scheitern; `partial` sagt das dann, und die Bewertung
 kommt trotzdem zurück.
 
 </details>
