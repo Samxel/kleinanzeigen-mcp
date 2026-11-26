@@ -20,7 +20,6 @@ important fields to the AI.
   <a href="#run-it-yourself">Run</a> ·
   <a href="#tools">Tools</a> ·
   <a href="#notes">Notes</a> ·
-  <a href="#tests">Tests</a> ·
   <a href="#disclaimer">Disclaimer</a> ·
   <a href="#license">License</a>
 </p>
@@ -284,19 +283,6 @@ high up: finer cuts like "Grafikkarten" are attribute filters.
   don't add a commit to `master` every day.
 - API details are documented in [`search_api.md`](search_api.md).
 - This uses Kleinanzeigen's internal mobile API, not an official one. Be nice to it.
-
-## Tests
-
-```bash
-pip install -r requirements.txt pytest
-pytest
-```
-
-The suite runs offline against a fake Kleinanzeigen and goes through a real
-MCP client, stdio transport included. `KLEINANZEIGEN_LIVE=1 pytest` adds smoke
-tests against the live API. CI runs the offline suite on every push and the
-live tests once a day, which is what notices Kleinanzeigen changing its app API
-or retiring the client credential.
 
 ## Disclaimer
 

@@ -21,7 +21,6 @@ und gibt der KI die wichtigen Felder zurück.
   <a href="#selbst-starten">Starten</a> ·
   <a href="#tools">Tools</a> ·
   <a href="#hinweise">Hinweise</a> ·
-  <a href="#tests">Tests</a> ·
   <a href="#haftungsausschluss">Haftungsausschluss</a> ·
   <a href="#lizenz">Lizenz</a>
 </p>
@@ -303,20 +302,6 @@ Merkmalfilter.
 - Die API ist in [`search_api.md`](search_api.md) dokumentiert (auf Englisch).
 - Das hier nutzt die interne App-API von Kleinanzeigen, keine offizielle.
   Geh pfleglich damit um.
-
-## Tests
-
-```bash
-pip install -r requirements.txt pytest
-pytest
-```
-
-Die Tests laufen offline gegen ein nachgebautes Kleinanzeigen und gehen durch
-einen echten MCP-Client, stdio-Transport eingeschlossen.
-`KLEINANZEIGEN_LIVE=1 pytest` fügt Kurztests gegen die echte API hinzu. Die CI
-lässt die Offline-Tests bei jedem Push laufen und die Live-Tests einmal am
-Tag; dabei fällt auf, wenn Kleinanzeigen die App-API ändert oder die
-Client-Zugangsdaten zurückzieht.
 
 ## Haftungsausschluss
 
