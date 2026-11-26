@@ -1,6 +1,6 @@
 <h1 align="center">kleinanzeigen-mcp</h1>
 
-<p align="center"><sub>From the same series: <a href="https://github.com/Samxel/geizhals-mcp">geizhals-mcp</a> · <a href="https://github.com/Samxel/willhaben-mcp">willhaben-mcp</a></sub></p>
+<p align="center"><sub>From the same series: <a href="https://github.com/Samxel/geizhals-mcp">geizhals-mcp</a> · <a href="https://github.com/Samxel/willhaben-mcp">willhaben-mcp</a> · <a href="https://github.com/Samxel/rabatt-mcp">rabatt-mcp</a></sub></p>
 
 An MCP server that lets an AI search [Kleinanzeigen](https://www.kleinanzeigen.de)
 listings and pull ad and seller details. It wraps the Kleinanzeigen Android
