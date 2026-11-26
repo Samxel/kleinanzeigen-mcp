@@ -46,7 +46,7 @@ get_ad_images (the photos themselves) or get_seller_info (who sells it).
 The category tree stops fairly high up: a finer cut like "Grafikkarten" is an \
 attribute value of "PC-Zubehör & Software", not a category.
 
-rows is at most 30; page on with the next_page a result returns, has_more says \
+rows is at most 30; page on with the next_offset a result returns, has_more says \
 whether anything is left. total is capped at 10000 by Kleinanzeigen.
 
 Fields without a value are left out of results.
@@ -104,14 +104,14 @@ def _content_tool(fn):
                     structured_output=False)(fn)
 
 
-def _rows(rows: int, page: int = 0) -> int:
-    """Validate a page size rather than quietly clamping 0 up to 1, and a page
-    index, which Kleinanzeigen would answer for -1 as if it were 0."""
+def _rows(rows: int, offset: int = 0) -> int:
+    """Validate a page size rather than quietly clamping 0 up to 1, and the
+    offset that goes with it."""
     rows = int(rows)
     if rows < 1:
         raise ToolError(f"rows must be at least 1 (got {rows}).")
-    if page < 0:
-        raise ToolError(f"page must be 0 or more (got {page}).")
+    if offset < 0:
+        raise ToolError(f"offset must not be negative (got {offset}).")
     return min(rows, MAX_ROWS)
 
 
@@ -125,16 +125,17 @@ def _check_range(name: str, low, high) -> None:
         )
 
 
-def _pagination(total, page: int, seen: int, returned: int) -> dict:
+def _pagination(total, position: int, returned: int, exhausted: bool) -> dict:
     """Where the caller stands in the result set, so paging can be stopped on a
-    signal instead of on a repeated page. ``seen`` counts the ads consumed from
-    the catalogue so far (which post-filtering can push past ``returned``)."""
+    signal instead of on a repeated page. ``position`` is the index of the
+    first ad not looked at yet (which post-filtering can push past what was
+    returned), so the next call resumes exactly there, even mid-page."""
     total = int(total) if str(total or "").isdigit() else None
-    more = not (total is not None and seen >= total)
+    more = position < total if total is not None else not exhausted
     return {
         "total": total,
         "rows_returned": returned,
-        "next_page": page + 1 if more else None,
+        "next_offset": position if more else None,
         "has_more": more,
     }
 
@@ -168,7 +169,7 @@ async def search_kleinanzeigen(
     require: Optional[list[str]] = None,
     exclude: Optional[list[str]] = None,
     rows: int = 5,
-    page: int = 0,
+    offset: int = 0,
     picture_required: bool = False,
     buy_now_only: bool = False,
     shippable: bool = False,
@@ -221,7 +222,7 @@ async def search_kleinanzeigen(
     if not query and category is None:
         raise ToolError("Provide 'query' and/or 'category'.")
     _check_range("price", min_price, max_price)
-    rows = _rows(rows, page)
+    rows = _rows(rows, offset)
 
     wanted = matching.tokens(query) if (title_only and query) else set()
     required = [matching.term_forms(t) for t in (require or []) if str(t).strip()]
@@ -275,31 +276,42 @@ async def search_kleinanzeigen(
                 return False
         return True
 
-    # A client-side filter has to page deeper than the caller asked for, so it
-    # pulls full pages and keeps going until `rows` survivors are found.
-    page_size = MAX_ROWS if post_filtered else rows
+    # Kleinanzeigen pages by page index and size, while a caller resumes at an
+    # ad offset. A client-side filter has to page deeper than asked and can stop
+    # mid-page, so it pulls full pages and skips into the first one; a plain
+    # search on a page boundary asks for exactly ``rows``.
+    page_size = rows if not post_filtered and offset % rows == 0 else MAX_ROWS
+    cursor, skip = divmod(offset, page_size)
     results: list = []
-    cursor, total, scanned = page, None, 0
+    position, total, exhausted = offset, None, False
     while True:
         page_params = params + [("page", str(cursor)), ("size", str(page_size))]
         payload = api.collection(await api.get("ads.json", params=page_params), "ads")
-        ads = payload.get("ad", [])
+        page_ads = payload.get("ad", [])
+        ads = page_ads[skip:]
+        skip = 0
         total = (payload.get("paging") or {}).get("numFound", total)
+        if not ads:
+            exhausted = True
+            break
         for ad in ads:
-            scanned += 1
+            position += 1
             hit = summaries.summarize_ad_hit(ad)
             if keep(hit):
                 results.append(hit)
                 if len(results) >= rows:
                     break
-        if not post_filtered or len(results) >= rows or not ads or scanned >= FILTER_MAX_SCAN:
+        if len(results) >= rows or (post_filtered and position - offset >= FILTER_MAX_SCAN):
+            break
+        if len(page_ads) < page_size:
+            # likely the last page; has_more still goes by total, since a page
+            # can come back short with paid placements filtered out
             break
         cursor += 1
 
-    consumed = page * page_size + scanned
-    result = {**_pagination(total, cursor, consumed, len(results)), "results": results}
+    result = {**_pagination(total, position, len(results), exhausted), "results": results}
     if post_filtered:
-        result["scanned"] = scanned
+        result["scanned"] = position - offset
     return result
 
 

@@ -48,7 +48,7 @@ until `rows` matches turn up or 250 ads were scanned:
 Paid "TOP" placements are left out unless `include_top_ads=True`. They sit
 above any sort order and are mostly repair shops and buyers ("Ankauf"), not
 the item. Each hit has a short `url`, whether it `ships`, and `image_count`.
-`total`, `next_page` and `has_more` say where to continue.
+`total`, `next_offset` and `has_more` say where to continue.
 
 </details>
 

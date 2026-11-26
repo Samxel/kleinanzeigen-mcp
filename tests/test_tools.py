@@ -24,7 +24,7 @@ async def test_search_summarizes_hits(ka, call):
     result = await call("search_kleinanzeigen", query="iPhone 13")
     hit = result["results"][0]
     assert (hit["id"], hit["title"], hit["price_amount"], hit["zip_code"]) == ("1", "iPhone 13 128GB", 350, "85664")
-    assert (result["total"], result["has_more"], result["next_page"]) == (4616, True, 1)
+    assert (result["total"], result["has_more"], result["next_offset"]) == (4616, True, 1)
     sent = ka.sent(SEARCH)[0].url.params
     assert (sent["q"], sent["size"], sent["page"]) == ("iPhone 13", "5", "0")
 
@@ -37,6 +37,26 @@ async def test_filters_page_on_until_enough_matches(ka, call):
                         title_only=True, rows=3)
     assert [r["id"] for r in result["results"]] == ["100", "101", "102"]
     assert result["scanned"] == 43
+
+
+async def test_filtered_paging_resumes_mid_page_without_losing_matches(ka, call):
+    # matches sit at 0, 2, 4, ... of a 30-ad page; two per call must walk them all
+    ads = [ad(i, "iPhone 13" if i % 2 == 0 else "iPhone 13 Pro") for i in range(40)]
+    ka.on(API, SEARCH, paged(ads))
+    seen, offset = [], 0
+    while offset is not None:
+        result = await call("search_kleinanzeigen", query="iPhone 13", exclude=["pro"], rows=2, offset=offset)
+        seen += [r["id"] for r in result["results"]]
+        offset = result.get("next_offset")
+    assert seen == [str(i) for i in range(0, 40, 2)]
+
+
+async def test_plain_search_off_a_page_boundary_skips_into_the_page(ka, call):
+    ads = [ad(i, f"Ad {i}") for i in range(40)]
+    ka.on(API, SEARCH, paged(ads))
+    result = await call("search_kleinanzeigen", query="x", rows=5, offset=27)
+    assert [r["id"] for r in result["results"]] == ["27", "28", "29", "30", "31"]
+    assert result["next_offset"] == 32
 
 
 async def test_search_sends_category_attributes_and_ranges(ka, call):

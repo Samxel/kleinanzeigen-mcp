@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 @pytest.mark.parametrize("tool, args, message", [
     ("search_kleinanzeigen", {}, "Provide 'query'"),
     ("search_kleinanzeigen", {"query": "x", "rows": 0}, "rows must be at least 1"),
-    ("search_kleinanzeigen", {"query": "x", "page": -1}, "page must be 0 or more"),
+    ("search_kleinanzeigen", {"query": "x", "offset": -1}, "offset must not be negative"),
     ("search_kleinanzeigen", {"query": "x", "min_price": 500, "max_price": 10}, "min_price .* is above max_price"),
     ("search_kleinanzeigen", {"query": "x", "category": "Grafikkarten"}, "Unknown category"),
     ("get_category_filters", {"category": "Gibtsnicht"}, "Unknown category"),
