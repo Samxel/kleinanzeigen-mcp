@@ -19,7 +19,6 @@ important fields to the AI.
   <a href="#add-it-to-claude-and-other-mcp-clients">Add to Claude</a> ·
   <a href="#run-it-yourself">Run</a> ·
   <a href="#tools">Tools</a> ·
-  <a href="#notes">Notes</a> ·
   <a href="#disclaimer">Disclaimer</a> ·
   <a href="#license">License</a>
 </p>
@@ -255,34 +254,6 @@ most 100 per call). The tree (159 categories) ships with the server in
 high up: finer cuts like "Grafikkarten" are attribute filters.
 
 </details>
-
-## Notes
-
-- Search quirks worth knowing: `total` is capped at 10000 by Kleinanzeigen (so
-  that value means "at least"), and a missing `price_amount` means "zu
-  verschenken" or "VB", see `price_type`.
-- `kleinanzeigen/server.py` holds the MCP tools; `main.py` only starts it from
-  a checkout. Next to it in the `kleinanzeigen` package: the API access and
-  credential (`api.py`), title matching, the category tree and the result
-  summaries.
-- Results go out as compact JSON with empty fields left out, tool schemas leave
-  out the titles and `null` branches pydantic would add, and what all tools
-  share is said once in the server instructions instead of in every tool
-  description. All of it keeps what the model has to read small.
-- `kleinanzeigen/data/categories.json` is a flattened snapshot of
-  Kleinanzeigen's category tree (title, id, children), built by
-  `scripts/build_categories.py` from the live `api/categories.json` (which
-  ships the tree wrapped in JAXB envelopes and a single "Alle Kategorien"
-  pseudo-root). Re-run it if Kleinanzeigen changes their categories.
-- Releases: bump `version` in `pyproject.toml` and `manifest.json`, then push a
-  tag such as `v1.1`. A `.0` patch may be left off the tag, so `v1.1` releases
-  1.1.0. The release workflow runs the tests, builds the wheel, the sdist and
-  the `.mcpb` bundle and attaches them to a GitHub release.
-- The badges read `coverage.json` from the `coverage` branch.
-  `scripts/update_coverage.py` refreshes it from Kleinanzeigen's public "Über
-  uns" page, and a daily GitHub Action commits any change there, so the counts
-  don't add a commit to `main` every day.
-- API details are documented in [`search_api.md`](search_api.md).
 
 ## Disclaimer
 

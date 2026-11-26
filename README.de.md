@@ -20,7 +20,6 @@ und gibt der KI die wichtigen Felder zurück.
   <a href="#in-claude-einbinden-und-andere-mcp-clients">In Claude einbinden</a> ·
   <a href="#selbst-starten">Starten</a> ·
   <a href="#tools">Tools</a> ·
-  <a href="#hinweise">Hinweise</a> ·
   <a href="#haftungsausschluss">Haftungsausschluss</a> ·
   <a href="#lizenz">Lizenz</a>
 </p>
@@ -270,38 +269,6 @@ endet recht weit oben: Feinere Einteilungen wie „Grafikkarten“ sind
 Merkmalfilter.
 
 </details>
-
-## Hinweise
-
-- Eigenheiten der Suche: Kleinanzeigen deckelt `total` bei 10000 (der Wert
-  heißt dann „mindestens“), und ein fehlender `price_amount` bedeutet „zu
-  verschenken“ oder „VB“, siehe `price_type`.
-- `kleinanzeigen/server.py` enthält die MCP-Tools; `main.py` startet den
-  Server nur aus einem Klon heraus. Daneben im Paket `kleinanzeigen`: der
-  API-Zugang mit Zugangsdaten (`api.py`), der Titelabgleich, der
-  Kategoriebaum und die Ergebniszusammenfassungen.
-- Ergebnisse gehen als kompaktes JSON ohne leere Felder raus, die
-  Tool-Schemas lassen die Titel und `null`-Zweige weg, die pydantic sonst
-  einfügt, und was alle Tools gemeinsam haben, steht einmal in den
-  Server-Anweisungen statt in jeder Tool-Beschreibung. All das hält klein, was
-  das Modell lesen muss.
-- `kleinanzeigen/data/categories.json` ist eine flache Kopie des
-  Kategoriebaums von Kleinanzeigen (title, id, children), gebaut von
-  `scripts/build_categories.py` aus dem aktuellen `api/categories.json` (das
-  den Baum in JAXB-Hüllen und unter einer einzigen Pseudo-Wurzel „Alle
-  Kategorien“ liefert). Neu ausführen, wenn Kleinanzeigen die Kategorien
-  ändert.
-- Releases: `version` in `pyproject.toml` und `manifest.json` erhöhen, dann
-  einen Tag wie `v1.1` pushen. Eine Patch-Version `.0` kann man im Tag
-  weglassen, `v1.1` veröffentlicht also 1.1.0. Der Release-Workflow lässt die
-  Tests laufen, baut Wheel, sdist und das `.mcpb`-Bundle und hängt sie an ein
-  GitHub-Release.
-- Die Badges holen ihre Zahlen aus `coverage.json` im Branch `coverage`.
-  `scripts/update_coverage.py` aktualisiert die Datei von der öffentlichen
-  Seite „Über uns“ von Kleinanzeigen, und eine tägliche GitHub Action
-  committet Änderungen dorthin, damit die Zahlen nicht jeden Tag einen Commit
-  in `main` erzeugen.
-- Die API ist in [`search_api.md`](search_api.md) dokumentiert (auf Englisch).
 
 ## Haftungsausschluss
 
