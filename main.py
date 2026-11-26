@@ -9,7 +9,7 @@ import html
 import inspect
 import json
 import logging
-from typing import Optional, Union
+from typing import Literal, Optional, Union
 
 import httpx
 from mcp.server import MCPServer
@@ -331,7 +331,8 @@ async def get_ad_detail(ad_id: int) -> dict:
 
 @_content_tool
 @api.tool_errors("ad")
-async def get_ad_images(ad_id: int, max_images: int = 4) -> list:
+async def get_ad_images(ad_id: int, max_images: int = 4,
+                        detail: Literal["low", "high"] = "low") -> list:
     """The ad's photos as images you can look at, up to
     ``max_images`` (at most 10). Use them whenever the answer depends on what
     the item looks like: condition, damage, completeness, or details only a
@@ -340,12 +341,16 @@ async def get_ad_images(ad_id: int, max_images: int = 4) -> list:
     Args:
         ad_id: The ad id from a search.
         max_images: How many photos to fetch. Default 4.
+        detail: "low" (300x400, enough for condition and completeness) or
+            "high" (720x960, about six times the tokens) to read small print
+            such as a label, serial number or screen.
     """
     max_images = max(1, min(int(max_images), 10))
     data = await api.get(f"ads/{ad_id}.json")
 
     ad = api.collection(data, "ad")
-    urls = summaries.image_urls(ad.get("pictures"))[:max_images]
+    size = "extraLarge" if detail == "high" else "large"
+    urls = summaries.image_urls(ad.get("pictures"), size)[:max_images]
     if not urls:
         return [f"No images found for ad {ad_id}."]
 

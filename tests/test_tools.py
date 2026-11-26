@@ -85,6 +85,18 @@ async def test_images_come_back_as_image_content(ka):
     async with Client(main.mcp) as client:
         result = await client.call_tool("get_ad_images", {"ad_id": 7, "max_images": 2})
     assert [b.type for b in result.content] == ["text", "image", "image"]
+    assert [r.url.params["rule"] for r in ka.sent("/api/v1/prod-ads/images/")] == ["$_1.AUTO", "$_1.AUTO"]
+
+
+async def test_high_detail_images_ask_for_the_larger_size(ka):
+    from mcp import Client
+    import main
+    ka.on(API, "/api/ads/7.json", detail(7, "iPhone 13", images=1))
+    ka.on("img.kleinanzeigen.de", "/", httpx.Response(200, content=b"\xff\xd8jpeg",
+                                                      headers={"content-type": "image/jpeg"}))
+    async with Client(main.mcp) as client:
+        await client.call_tool("get_ad_images", {"ad_id": 7, "detail": "high"})
+    assert ka.sent("/api/v1/prod-ads/images/")[0].url.params["rule"] == "$_59.AUTO"
 
 
 async def test_seller_info_joins_profile_and_reputation(ka, call):

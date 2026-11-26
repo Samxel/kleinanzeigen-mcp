@@ -43,7 +43,9 @@ def ad(ad_id, title, *, price=150, price_type="SPECIFIED_AMOUNT", description="F
         "attributes": {"attribute": list(attributes)},
         "pictures": {"picture": [
             {"link": [{"href": f"https://img.kleinanzeigen.de/api/v1/prod-ads/images/{ad_id}-{i}?rule=$_1.AUTO",
-                       "rel": "large"}]} for i in range(images)]},
+                       "rel": "large"},
+                      {"href": f"https://img.kleinanzeigen.de/api/v1/prod-ads/images/{ad_id}-{i}?rule=$_59.AUTO",
+                       "rel": "extraLarge"}]} for i in range(images)]},
         "link": [{"href": f"https://www.kleinanzeigen.de/s-anzeige/x/{ad_id}-{category}-1234",
                   "rel": "self-public-website"}],
     }

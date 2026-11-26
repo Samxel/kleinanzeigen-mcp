@@ -7,13 +7,15 @@ from typing import Optional
 from . import api
 
 
-def image_urls(pictures: dict) -> list[str]:
+def image_urls(pictures: dict, size: str = "large") -> list[str]:
+    """Each picture's link in ``size`` ("large" is 300x400, "extraLarge"
+    720x960), falling back to "large" where a picture lacks it."""
     urls = []
     for pic in (pictures or {}).get("picture", []):
-        for link in pic.get("link", []):
-            if link.get("rel") == "large":
-                urls.append(link["href"])
-                break
+        links = {link.get("rel"): link.get("href") for link in pic.get("link", [])}
+        url = links.get(size) or links.get("large")
+        if url:
+            urls.append(url)
     return urls
 
 
