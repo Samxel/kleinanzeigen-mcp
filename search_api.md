@@ -166,4 +166,4 @@ single "Alle Kategorien" pseudo-root whose `category[]` children are the real
 top-level categories. Each node has a bare `id` (numeric, what `categoryId`
 takes), `id-name.value` (a slug), `localized-name.value` (display name) and a
 `category` array of children. `scripts/build_categories.py` fetches this fresh
-and flattens it (dropping the pseudo-root) into `data/categories.json`.
+and flattens it (dropping the pseudo-root) into `kleinanzeigen/data/categories.json`.

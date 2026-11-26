@@ -1,5 +1,7 @@
 <h1 align="center">kleinanzeigen-mcp</h1>
 
+<p align="center"><sub>From the same series: <a href="https://github.com/Samxel/geizhals-mcp">geizhals-mcp</a> · <a href="https://github.com/Samxel/willhaben-mcp">willhaben-mcp</a></sub></p>
+
 An MCP server that lets an AI search [Kleinanzeigen](https://www.kleinanzeigen.de)
 listings and pull ad and seller details. It wraps the Kleinanzeigen Android
 app's API (`api.kleinanzeigen.de` / `gateway.kleinanzeigen.de`) and returns the
@@ -11,20 +13,157 @@ important fields to the AI.
   <a href="https://themen.kleinanzeigen.de/ueber-uns/"><img alt="Commercial users" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FSamxel%2Fkleinanzeigen-mcp%2Fcoverage%2Fcoverage.json&query=%24.commercial_users&label=Commercial%20users&color=1e6fff&cacheSeconds=3600"></a>
 </p>
 
+<p align="center">
+  <a href="#highlights">Highlights</a> ·
+  <a href="#setup">Setup</a> ·
+  <a href="#add-it-to-claude-and-other-mcp-clients">Add to Claude</a> ·
+  <a href="#run-it-yourself">Run</a> ·
+  <a href="#tools">Tools</a> ·
+  <a href="#notes">Notes</a> ·
+  <a href="#tests">Tests</a> ·
+  <a href="#disclaimer">Disclaimer</a> ·
+  <a href="#license">License</a>
+</p>
+
+<p align="center"><sub><a href="README.de.md">Diese Anleitung auf Deutsch</a></sub></p>
+
 ## Highlights
 
 - **Visual Listing Analysis**  
-  Downloads and analyzes the actual ad photos, allowing vision-capable AI to inspect an item's **condition, wear, damage, completeness, and other visual details** instead of relying only on the seller's description.
+  Downloads and analyzes the actual ad photos, allowing vision-capable AI to inspect an item's **condition, wear, damage, completeness, and other visual details** instead of relying only on the seller's description. Small by default, sharp enough to read a label when asked.
 
 - **Filters the API doesn't have**  
   `title_only`, `require` and `exclude` are applied server-side here and page on automatically, so an AI gets **the number of real matches it asked for** instead of re-searching to work around accessories and wrong variants.
 
 - **From discovery to full inspection**  
-  Find relevant ads, then retrieve **complete descriptions, itemised attributes, locations, seller reputation and all photos** for a deeper analysis.
+  Find relevant ads, then retrieve **complete descriptions, itemised attributes, locations, seller reputation and all photos** for a deeper analysis, for one ad or up to ten at once.
+
+## Setup
+
+Pick one of three ways. All of them need nothing running in the background:
+the client starts the server when it needs it.
+
+**Claude Desktop, no terminal.** Download `kleinanzeigen-mcp.mcpb` from the
+[latest release](https://github.com/Samxel/kleinanzeigen-mcp/releases/latest)
+and double-click it. Claude Desktop shows an install dialog and sets up the
+dependencies itself. Done; skip the rest of this section.
+
+**With [uv](https://docs.astral.sh/uv/), no clone.** One command runs the
+current version straight from GitHub:
+
+```bash
+uvx --from git+https://github.com/Samxel/kleinanzeigen-mcp kleinanzeigen-mcp --stdio
+```
+
+**From a clone.** Requires Python 3.10+.
+
+```bash
+git clone https://github.com/Samxel/kleinanzeigen-mcp
+cd kleinanzeigen-mcp
+pip install -r requirements.txt
+python main.py --stdio
+```
+
+`uv run main.py --stdio` also works without the `pip install`: `main.py`
+declares its own dependencies.
+
+## Add it to Claude (and other MCP clients)
+
+### Claude Code
+
+One command, no config file:
+
+```bash
+claude mcp add kleinanzeigen -- uvx --from git+https://github.com/Samxel/kleinanzeigen-mcp kleinanzeigen-mcp --stdio
+```
+
+From a clone, point it at `main.py` instead:
+
+```bash
+claude mcp add kleinanzeigen -- python /path/to/kleinanzeigen-mcp/main.py --stdio
+```
+
+Add `--scope user` to have it in every project instead of only the current one.
+`claude mcp list` shows whether the connection came up, `claude mcp remove
+kleinanzeigen` takes it out again.
+
+### Claude Desktop
+
+The `.mcpb` from [Setup](#setup) is the easiest way. Without it, open
+**Settings > Developer > Edit Config**, add the `kleinanzeigen` entry to
+`claude_desktop_config.json` and restart Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "kleinanzeigen": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/Samxel/kleinanzeigen-mcp", "kleinanzeigen-mcp", "--stdio"]
+    }
+  }
+}
+```
+
+From a clone, use `"command": "python"` and `"args":
+["C:\\path\\to\\kleinanzeigen-mcp\\main.py", "--stdio"]` (the full path to
+`main.py`, forward slashes on macOS/Linux).
+
+Custom connectors (**Settings > Connectors**) connect from Anthropic's cloud,
+so they cannot reach a server running only on your own machine. To use the
+tools in claude.ai and the mobile apps, expose the HTTP server (see [Run it
+yourself](#run-it-yourself)) through cloudflared, ngrok or a box with a public
+hostname, and add that HTTPS URL under **Settings > Connectors > Add custom
+connector**. Anyone who finds the URL can use the server too, though, so put
+authentication in front of it.
+
+Every tool is marked read-only, so clients that honour that hint won't ask
+before each call. In Claude Desktop you can also open **Settings > Connectors >
+kleinanzeigen** and set the tools' dropdown on the right to **Always allow**.
+
+### Cursor, Codex, VS Code and other JSON-config clients
+
+The same entry as for Claude Desktop, in the client's MCP config:
+
+```json
+{
+  "mcpServers": {
+    "kleinanzeigen": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/Samxel/kleinanzeigen-mcp", "kleinanzeigen-mcp", "--stdio"]
+    }
+  }
+}
+```
+
+Clients that connect to a URL instead take `"type": "http"` and `"url":
+"http://127.0.0.1:8020/mcp"`, with the server started as below.
+
+## Run it yourself
+
+Without `--stdio`, the server starts over streamable HTTP and prints where it's
+listening:
+
+```bash
+python main.py
+```
+
+```
+Starting kleinanzeigen-mcp server on http://127.0.0.1:8020/mcp
+```
+
+Point your client at that URL, e.g. `claude mcp add --transport http
+kleinanzeigen http://127.0.0.1:8020/mcp`. Host, port and path live at the top of
+`kleinanzeigen/server.py`; the port differs from geizhals-mcp (8000) and
+willhaben-mcp (8010), so all three can run side by side. Installed with pip or
+uv, the `kleinanzeigen-mcp` command and `python -m kleinanzeigen` do the same
+as `python main.py`.
 
 ## Tools
 
-Results come as compact JSON, and fields without a value are left out.
+Results come as compact JSON, and fields without a value are left out. Search
+hits carry no link of their own: an ad's page is
+`https://www.kleinanzeigen.de/s-anzeige/{id}`, which the server instructions
+tell the AI once instead of repeating it in every hit.
 
 <details>
 <summary><code>search_kleinanzeigen(query, ...)</code>: search listings by keyword and/or category</summary>
@@ -47,25 +186,32 @@ until `rows` matches turn up or 250 ads were scanned:
 
 Paid "TOP" placements are left out unless `include_top_ads=True`. They sit
 above any sort order and are mostly repair shops and buyers ("Ankauf"), not
-the item. Each hit has a short `url`, whether it `ships`, and `image_count`.
-`total`, `next_offset` and `has_more` say where to continue.
+the item. Each hit says whether it `ships` and how many photos it has
+(`image_count`). `total`, `next_offset` and `has_more` say where to continue;
+`next_offset` points at the exact ad a filtered search stopped at, so no match
+is skipped between pages.
 
 </details>
 
 <details>
-<summary><code>get_ad_detail(ad_id)</code>: get one ad in full</summary>
+<summary><code>get_ad_detail(ad_id | ids)</code>: get one ad, or up to ten, in full</summary>
 
 Everything about one ad: full description, attributes by the label the ad page
 shows ("Zustand", "Speicher", ...), category, location, shipping options, the
-seller's rating and how many photos it has.
+seller's rating and how many photos it has. Pass up to 10 `ids` instead of
+`ad_id` to compare several in one call; they come back as `{count, ads,
+failed}`, and an ad that is gone lands in `failed` instead of failing the rest.
 
 </details>
 
 <details>
-<summary><code>get_ad_images(ad_id, max_images=4)</code>: look at an ad's photos</summary>
+<summary><code>get_ad_images(ad_id, max_images=4, detail="low")</code>: look at an ad's photos</summary>
 
 Download an ad's photos server-side (at most 10) and return them as real image
 content, so a vision-capable client sees the pictures instead of just URLs.
+`detail="low"` (300×400, about 160 tokens per photo) is enough for condition
+and completeness; `detail="high"` (720×960, about 900 tokens) reads small print
+such as a label, a serial number or a screen.
 
 </details>
 
@@ -80,153 +226,58 @@ then says so and the reputation still comes back.
 </details>
 
 <details>
-<summary><code>search_locations(query)</code>: find a location id</summary>
+<summary><code>search_locations(query, limit=10)</code>: find a location id</summary>
 
 Look up location ids for the `location_id` filter by name prefix: states,
-cities and districts. For a postcode, pass `zip_code` to the search instead.
+cities and districts (at most 50 per call; `count` says how many matched). For
+a postcode, pass `zip_code` to the search instead.
 
 </details>
 
 <details>
-<summary><code>get_category_filters(category)</code>: list a category's attribute filters</summary>
+<summary><code>get_category_filters(category, key)</code>: list a category's attribute filters</summary>
 
 The attribute filters the search's `attributes` argument takes for one
-category, straight from Kleinanzeigen's own search-options schema. They narrow
-far better than extra words in `query`: in "PC-Zubehör & Software" they cut a
-search down to `grafikkarten` or `mainboards` outright.
+category, straight from Kleinanzeigen's own search-options schema, with each
+filter's `values` as a value-to-label map (`{"bmw": "BMW"}`). They narrow far
+better than extra words in `query`: in "PC-Zubehör & Software" they cut a
+search down to `grafikkarten` or `mainboards` outright. A category with long
+value lists (cars list every make) can be narrowed to one filter with `key`,
+by key or label (`"autos.marke"` or `"Marke"`).
 
 </details>
 
 <details>
-<summary><code>list_categories(query)</code>: look up category ids</summary>
+<summary><code>list_categories(query, limit=40)</code>: look up category ids</summary>
 
-Browse the category tree for the ids the search takes. The tree (159
-categories) ships with the server in `data/categories.json`, so this costs no
-request. It stops fairly high up: finer cuts like "Grafikkarten" are attribute
-filters.
+Browse the category tree for the ids the search takes, each with its path (at
+most 100 per call). The tree (159 categories) ships with the server in
+`kleinanzeigen/data/categories.json`, so this costs no request. It stops fairly
+high up: finer cuts like "Grafikkarten" are attribute filters.
 
 </details>
-
-## Setup
-
-Requires Python 3.10+.
-
-```bash
-pip install -r requirements.txt
-```
-
-With [uv](https://docs.astral.sh/uv/) you can skip this step: `main.py`
-declares its own dependencies, so `uv run main.py` installs them on the fly.
-
-## Run
-
-```bash
-python main.py
-```
-
-The server starts over streamable HTTP and prints where it's listening:
-
-```
-Starting kleinanzeigen-mcp server on http://127.0.0.1:8020/mcp
-```
-
-Point your MCP client at that URL. Host, port and path live at the top of
-`main.py`; the port differs from geizhals-mcp (8000) and willhaben-mcp (8010),
-so all three can run side by side.
-
-For clients that start the server themselves, `python main.py --stdio` speaks
-MCP over stdin/stdout instead. Nothing has to run in the background then.
-
-## Add it to Claude (and other MCP clients)
-
-Clients that start their own servers use the stdio mode. Clients that connect
-to a URL need `python main.py` running and take the URL it printed on startup.
-
-### Claude Code
-
-One command, no config file. Claude Code starts the server itself:
-
-```bash
-claude mcp add kleinanzeigen -- python /path/to/kleinanzeigen-mcp/main.py --stdio
-```
-
-Or connect to a server you already started with `python main.py`:
-
-```bash
-claude mcp add --transport http kleinanzeigen http://127.0.0.1:8020/mcp
-```
-
-Add `--scope user` to have it in every project instead of only the current one.
-`claude mcp list` shows whether the connection came up, `claude mcp remove
-kleinanzeigen` takes it out again.
-
-### Cursor, Codex, VS Code and other JSON-config clients
-
-Same URL, in the client's MCP config:
-
-```json
-{
-  "mcpServers": {
-    "kleinanzeigen": {
-      "type": "http",
-      "url": "http://127.0.0.1:8020/mcp"
-    }
-  }
-}
-```
-
-### Claude Desktop
-
-Custom connectors (**Settings > Connectors**) connect from Anthropic's cloud,
-so they cannot reach a server running only on your own machine. Two ways
-around it:
-
-**Let Claude Desktop start it over stdio.** Open **Settings > Developer > Edit
-Config**, add the `kleinanzeigen` entry to `claude_desktop_config.json` and
-restart Claude Desktop:
-
-```json
-{
-  "mcpServers": {
-    "kleinanzeigen": {
-      "command": "python",
-      "args": ["C:\\path\\to\\kleinanzeigen-mcp\\main.py", "--stdio"]
-    }
-  }
-}
-```
-
-Use the full path to `main.py` (forward slashes on macOS/Linux). With uv
-installed, `"command": "uv"` and `"args": ["run",
-"/path/to/kleinanzeigen-mcp/main.py", "--stdio"]` also takes care of the
-dependencies.
-
-**Or expose the server** (cloudflared, ngrok, or run it on a box with a public
-hostname) and add that HTTPS URL under **Settings > Connectors > Add custom
-connector**. That way the tools also work in claude.ai and the mobile apps.
-Anyone who finds the URL can use the server too, though, so put
-authentication in front of it.
-
-Every tool is marked read-only, so clients that honour that hint won't ask
-before each call. In Claude Desktop you can also open **Settings > Connectors >
-kleinanzeigen** and set the tools' dropdown on the right to **Always allow**.
 
 ## Notes
 
 - Search quirks worth knowing: `total` is capped at 10000 by Kleinanzeigen (so
   that value means "at least"), and a missing `price_amount` means "zu
   verschenken" or "VB", see `price_type`.
-- `main.py` holds the MCP tools; the `kleinanzeigen/` package holds the API
-  access and credential (`api.py`), title matching, the category tree and the
-  result summaries.
-- Results go out as compact JSON with empty fields left out, and what all tools
+- `kleinanzeigen/server.py` holds the MCP tools; `main.py` only starts it from
+  a checkout. Next to it in the `kleinanzeigen` package: the API access and
+  credential (`api.py`), title matching, the category tree and the result
+  summaries.
+- Results go out as compact JSON with empty fields left out, tool schemas leave
+  out the titles and `null` branches pydantic would add, and what all tools
   share is said once in the server instructions instead of in every tool
-  description. Both keep what the model has to read small.
-- `data/categories.json` is a flattened snapshot of Kleinanzeigen's category
-  tree (title, id, children), built by `scripts/build_categories.py` from the
-  live `api/categories.json` (which ships the tree wrapped in JAXB envelopes
-  and a single "Alle Kategorien" pseudo-root). Re-run it if Kleinanzeigen
-  changes their categories.
+  description. All of it keeps what the model has to read small.
+- `kleinanzeigen/data/categories.json` is a flattened snapshot of
+  Kleinanzeigen's category tree (title, id, children), built by
+  `scripts/build_categories.py` from the live `api/categories.json` (which
+  ships the tree wrapped in JAXB envelopes and a single "Alle Kategorien"
+  pseudo-root). Re-run it if Kleinanzeigen changes their categories.
+- Releases: bump `version` in `pyproject.toml` and `manifest.json`, then push a
+  tag such as `v1.0.1`. The release workflow runs the tests, builds the wheel,
+  the sdist and the `.mcpb` bundle and attaches them to a GitHub release.
 - The badges read `coverage.json` from the `coverage` branch.
   `scripts/update_coverage.py` refreshes it from Kleinanzeigen's public "Über
   uns" page, and a daily GitHub Action commits any change there, so the counts
@@ -237,7 +288,7 @@ kleinanzeigen** and set the tools' dropdown on the right to **Always allow**.
 ## Tests
 
 ```bash
-pip install pytest
+pip install -r requirements.txt pytest
 pytest
 ```
 
@@ -262,3 +313,5 @@ hammer their servers.
 ## License
 
 [`MIT LICENSE`](LICENSE). Provided "as is", without warranty.
+
+<p align="center"><sub><a href="README.de.md">Diese Anleitung auf Deutsch</a></sub></p>
