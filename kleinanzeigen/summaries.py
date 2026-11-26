@@ -70,7 +70,7 @@ def summarize_ad_hit(ad: dict) -> dict:
         "start_date": (api.unwrap(ad.get("start-date-time")) or "")[:16] or None,
         # the photos themselves are in get_ad_images
         "image_count": len((ad.get("pictures") or {}).get("picture", [])),
-        "url": ad_url(ad.get("id")),
+        # no link per hit: the instructions say how one is built from the id
     }
 
 

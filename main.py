@@ -49,7 +49,8 @@ attribute value of "PC-Zubehör & Software", not a category.
 rows is at most 30; page on with the next_offset a result returns, has_more says \
 whether anything is left. total is capped at 10000 by Kleinanzeigen.
 
-Fields without a value are left out of results.
+Fields without a value are left out of results. Search hits carry no link: an \
+ad's page is https://www.kleinanzeigen.de/s-anzeige/{id}.
 """
 
 # The tool list only changes with a new release, so clients on the 2026-07-28
@@ -510,8 +511,7 @@ async def get_category_filters(category: Union[int, str]) -> list[dict]:
 @_tool(annotations=LOCAL)
 async def list_categories(query: Optional[str] = None, limit: int = 40) -> dict:
     """Find category ids for ``search_kleinanzeigen`` and
-    ``get_category_filters``. Returns ``{count, categories: [{id, title,
-    path}]}``.
+    ``get_category_filters``. Returns ``{count, categories: [{id, path}]}``.
 
     Args:
         query: Part of the category path, e.g. "pc-zubehör". Omit to list
@@ -521,7 +521,7 @@ async def list_categories(query: Optional[str] = None, limit: int = 40) -> dict:
     flat: list = []
     categories.walk(categories.CATEGORIES, [], flat)
     q = matching.norm(query) if query else None
-    rows = [{"id": node.get("id"), "title": node.get("title"), "path": path}
+    rows = [{"id": node.get("id"), "path": path}
             for node, path in flat if not q or q in matching.norm(path)]
     return {"count": len(rows), "categories": rows[:limit]}
 

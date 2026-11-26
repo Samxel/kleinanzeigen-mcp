@@ -12,7 +12,7 @@ API = "api.kleinanzeigen.de"
 async def test_a_plain_hit_leaves_out_the_defaults(ka, call):
     ka.on(API, "/api/ads.json", search([ad(1, "iPhone 13", shipping=())]))
     [hit] = (await call("search_kleinanzeigen", query="iPhone 13"))["results"]
-    assert hit["url"] == "https://www.kleinanzeigen.de/s-anzeige/1"
+    assert "url" not in hit
     assert hit["start_date"] == "2026-10-27T23:54" and hit["ships"] is False
     assert not {"price_currency", "price_type", "is_top_ad", "image_url"} & set(hit)
 

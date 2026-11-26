@@ -27,3 +27,8 @@ def test_a_compound_is_no_ending():
 async def test_an_ambiguous_name_lists_ids(call):
     with pytest.raises(ToolFailed, match=r"ambiguous. Closest matches: 241 \(Auto, Rad & Boot / Weiteres"):
         await call("search_kleinanzeigen", query="x", category="Weiteres")
+
+
+async def test_listed_categories_carry_the_path_only(call):
+    result = await call("list_categories", query="pc-zubehör")
+    assert result["categories"][0] == {"id": 225, "path": "Elektronik / PC-Zubehör & Software"}
