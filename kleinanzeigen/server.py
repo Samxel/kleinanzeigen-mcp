@@ -45,8 +45,8 @@ attribute value of "PC-Zubehör & Software", not a category.
 rows is at most 30; page on with the next_offset a result returns, has_more says \
 whether anything is left. total is capped at 10000 by Kleinanzeigen.
 
-Fields without a value are left out of results. Search hits carry no link: an \
-ad's page is https://www.kleinanzeigen.de/s-anzeige/{id}.
+Fields without a value are left out of results. Every hit and ad has a url: \
+whenever you name an ad to the user, give its link.
 """
 
 # The tool list only changes with a new release, so clients on the 2026-07-28

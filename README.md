@@ -152,10 +152,9 @@ as `python main.py`.
 
 ## Tools
 
-Results come as compact JSON, and fields without a value are left out. Search
-hits carry no link of their own: an ad's page is
-`https://www.kleinanzeigen.de/s-anzeige/{id}`, which the server instructions
-tell the AI once instead of repeating it in every hit.
+Results come as compact JSON, and fields without a value are left out. Every
+hit and ad carries its `url`; the server instructions ask the AI to link every
+ad it names.
 
 <details>
 <summary><code>search_kleinanzeigen(query, ...)</code>: search listings by keyword and/or category</summary>

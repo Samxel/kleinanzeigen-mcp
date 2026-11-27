@@ -157,10 +157,9 @@ laufen können. Mit pip oder uv installiert, machen der Befehl
 
 ## Tools
 
-Ergebnisse kommen als kompaktes JSON, Felder ohne Wert fallen weg.
-Suchtreffer haben keinen eigenen Link: Die Anzeigenseite ist
-`https://www.kleinanzeigen.de/s-anzeige/{id}`. Das steht einmal in den
-Server-Anweisungen, statt in jedem Treffer wiederholt zu werden.
+Ergebnisse kommen als kompaktes JSON, Felder ohne Wert fallen weg. Jeder
+Treffer und jede Anzeige hat eine `url`; die Server-Anweisungen bitten die KI,
+jede genannte Anzeige zu verlinken.
 
 <details>
 <summary><code>search_kleinanzeigen(query, ...)</code>: Anzeigen nach Suchbegriff und/oder Kategorie durchsuchen</summary>
