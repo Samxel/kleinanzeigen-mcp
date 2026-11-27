@@ -39,14 +39,8 @@ und gibt der KI die wichtigen Felder zurück.
 
 ## Einrichtung
 
-Drei Wege, einer reicht. Bei keinem muss etwas im Hintergrund laufen: Der
+Zwei Wege, einer reicht. Bei keinem muss etwas im Hintergrund laufen: Der
 Client startet den Server, wenn er ihn braucht.
-
-**Claude Desktop, ohne Terminal.** `kleinanzeigen-mcp.mcpb` aus dem
-[neuesten Release](https://github.com/Samxel/kleinanzeigen-mcp/releases/latest)
-herunterladen und doppelklicken. Claude Desktop zeigt einen
-Installationsdialog und richtet die Abhängigkeiten selbst ein. Fertig, den Rest
-dieses Abschnitts kannst du überspringen.
 
 **Mit [uv](https://docs.astral.sh/uv/), ohne Klonen.** Ein Befehl startet die
 aktuelle Version direkt von GitHub:
@@ -89,9 +83,8 @@ remove kleinanzeigen` entfernt ihn wieder.
 
 ### Claude Desktop
 
-Am einfachsten ist die `.mcpb` aus der [Einrichtung](#einrichtung). Ohne sie
-öffnest du **Settings > Developer > Edit Config**, trägst `kleinanzeigen` in
-`claude_desktop_config.json` ein und startest Claude Desktop neu:
+Öffne **Settings > Developer > Edit Config**, trag `kleinanzeigen` in
+`claude_desktop_config.json` ein und starte Claude Desktop neu:
 
 ```json
 {

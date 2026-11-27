@@ -25,4 +25,4 @@ Issues = "https://github.com/Samxel/kleinanzeigen-mcp/issues"
 packages = ["kleinanzeigen"]
 
 [tool.hatch.build.targets.sdist]
-exclude = [".github", "tests", "scripts", "manifest.json", ".mcpbignore"]
+exclude = [".github", "tests", "scripts"]
